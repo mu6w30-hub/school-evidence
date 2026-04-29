@@ -827,8 +827,7 @@ function showSection(section){
     document.getElementById('allSection').style.display=section==='all'?'block':'none';
     document.getElementById('usersSection').style.display=section==='users'?'block':'none';
     document.getElementById('syncSection').style.display=section==='sync'?'block':'none';
-    document.querySelectorAll('.nav-item').forEach((item,idx)=>{item.classList.remove('active');});
-    event.target.classList.add('active');
+    document.querySelectorAll('.nav-item').forEach((item)=>{item.classList.remove('active');});
     if(section==='users')loadUsers();
 }
 async function logout(){await fetch('/api/logout',{method:'POST'});window.location.href='/';}
