@@ -28,7 +28,145 @@ DB_PATH = os.path.join(DATA_DIR, 'evidence.db')
 # ============ إعدادات Supabase ============
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
+# ============ دوال إدارة المستخدمين ============
 
+@app.route('/api/admin/users', methods=['GET'])
+def admin_get_users():
+    """جلب جميع المستخدمين"""
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, username, full_name, 'user' as type FROM users ORDER BY id")
+    rows = c.fetchall()
+    conn.close()
+    
+    users = [{'id': r[0], 'username': r[1], 'full_name': r[2], 'type': r[3]} for r in rows]
+    return jsonify({'success': True, 'data': users})
+
+@app.route('/api/admin/add-user', methods=['POST'])
+def admin_add_user():
+    """إضافة مستخدم جديد"""
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    full_name = data.get('full_name')
+    
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'اسم المستخدم وكلمة السر مطلوبان'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # التحقق من عدم وجود المستخدم
+    c.execute("SELECT id FROM users WHERE username=?", (username,))
+    if c.fetchone():
+        conn.close()
+        return jsonify({'success': False, 'error': 'اسم المستخدم موجود مسبقاً'})
+    
+    try:
+        c.execute("INSERT INTO users (username, password, full_name) VALUES (?, ?, ?)",
+                  (username, password, full_name))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'message': 'تم إضافة المستخدم بنجاح'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/admin/update-user', methods=['POST'])
+def admin_update_user():
+    """تعديل مستخدم (كلمة السر أو الاسم)"""
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    data = request.json
+    user_id = data.get('id')
+    password = data.get('password')
+    full_name = data.get('full_name')
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    updates = []
+    values = []
+    if password:
+        updates.append("password = ?")
+        values.append(password)
+    if full_name:
+        updates.append("full_name = ?")
+        values.append(full_name)
+    
+    if not updates:
+        conn.close()
+        return jsonify({'success': False, 'error': 'لا توجد بيانات للتحديث'})
+    
+    values.append(user_id)
+    query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+    
+    try:
+        c.execute(query, values)
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'message': 'تم تحديث المستخدم بنجاح'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/admin/delete-user', methods=['POST'])
+def admin_delete_user():
+    """حذف مستخدم"""
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    data = request.json
+    user_id = data.get('id')
+    username = data.get('username')
+    
+    # منع حذف المدير الرئيسي
+    if username == 'admin':
+        return jsonify({'success': False, 'error': 'لا يمكن حذف حساب المدير الرئيسي'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    try:
+        # حذف توثيقات المستخدم أولاً
+        c.execute("DELETE FROM evidences WHERE username=?", (username,))
+        # ثم حذف المستخدم
+        c.execute("DELETE FROM users WHERE id=? AND username!=?", (user_id, 'admin'))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'message': 'تم حذف المستخدم بنجاح'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/admin/reset-password', methods=['POST'])
+def admin_reset_password():
+    """إعادة تعيين كلمة السر لمستخدم"""
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    data = request.json
+    user_id = data.get('id')
+    new_password = data.get('new_password', 'pass123')
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    try:
+        c.execute("UPDATE users SET password = ? WHERE id = ?", (new_password, user_id))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'message': f'تم تغيير كلمة السر إلى: {new_password}'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)})
 # ============ بيانات العناصر والشواهد (21 عنصراً كاملاً) ============
 ELEMENTS = {
     1: {"title": "تعزيز القيم الإسلامية والهوية الوطنية", "witnesses": [
@@ -535,46 +673,57 @@ displayElements();
 ADMIN_PAGE = '''
 <!DOCTYPE html>
 <html dir="rtl">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>لوحة المدير</title>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>لوحة المدير - نظام توثيق الشواهد</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',sans-serif;background:#f0f2f5}
-.sidebar{position:fixed;right:0;top:0;width:260px;height:100%;background:linear-gradient(180deg,#1a2a6c,#b21f1f);color:white;padding:20px}
-.sidebar h3{text-align:center;margin-bottom:30px}
-.nav-item{padding:12px 15px;margin:8px 0;border-radius:12px;cursor:pointer;background:rgba(255,255,255,0.1)}
-.nav-item:hover,.nav-item.active{background:rgba(255,255,255,0.25)}
-.main-content{margin-right:260px;padding:20px}
-.header{background:white;border-radius:15px;padding:20px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px;margin-bottom:20px}
-.stat-card{background:white;padding:20px;border-radius:15px;text-align:center}
+.sidebar{position:fixed;right:0;top:0;width:280px;height:100%;background:linear-gradient(180deg,#1a2a6c,#b21f1f);color:white;padding:20px;overflow-y:auto}
+.sidebar h3{text-align:center;margin-bottom:30px;padding-bottom:15px;border-bottom:2px solid rgba(255,255,255,0.3)}
+.nav-item{padding:12px 15px;margin:8px 0;border-radius:12px;cursor:pointer;background:rgba(255,255,255,0.1);transition:0.3s}
+.nav-item:hover,.nav-item.active{background:rgba(255,255,255,0.25);transform:translateX(-5px)}
+.main-content{margin-right:280px;padding:20px;min-height:100vh}
+.header{background:white;border-radius:15px;padding:20px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px;margin-bottom:20px}
+.stat-card{background:white;padding:20px;border-radius:15px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.1)}
 .stat-number{font-size:32px;font-weight:bold;color:#667eea}
-.sync-buttons{display:flex;gap:10px;margin-bottom:20px}
-.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer}
+.sync-buttons,.action-buttons{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:14px}
 .btn-primary{background:#667eea;color:white}
 .btn-success{background:#28a745;color:white}
+.btn-danger{background:#dc3545;color:white}
+.btn-warning{background:#ffc107;color:#333}
+.btn-info{background:#17a2b8;color:white}
 table{width:100%;background:white;border-radius:15px;overflow:hidden}
 th,td{padding:12px;text-align:right;border-bottom:1px solid #eee}
 th{background:#f8f9fa}
 .evidence-img{width:50px;height:50px;object-fit:cover;border-radius:8px;cursor:pointer}
-.logout-btn{background:rgba(255,255,255,0.2);border:none;color:white;padding:10px;border-radius:8px;cursor:pointer}
+.logout-btn{background:rgba(255,255,255,0.2);border:none;color:white;padding:10px;border-radius:8px;cursor:pointer;width:100%;margin-top:20px}
 .sync-status{background:#e9ecef;padding:10px;border-radius:8px;margin-bottom:20px;display:none}
-@media(max-width:768px){.sidebar{width:200px}.main-content{margin-right:200px}}
+.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center}
+.modal-content{background:white;border-radius:15px;padding:25px;width:90%;max-width:400px}
+.modal-content input{width:100%;padding:10px;margin:10px 0;border:1px solid #ddd;border-radius:8px}
+.modal-buttons{display:flex;gap:10px;margin-top:20px}
+.modal-buttons button{flex:1}
+@media(max-width:768px){.sidebar{width:220px}.main-content{margin-right:220px}}
 </style>
 </head>
 <body>
 <div class="sidebar"><h3>👑 لوحة المدير</h3>
 <div class="nav-item active" onclick="showSection('all')">📋 جميع التوثيقات</div>
+<div class="nav-item" onclick="showSection('users')">👥 إدارة المستخدمين</div>
 <div class="nav-item" onclick="showSection('sync')">🔄 المزامنة</div>
-<div class="nav-item" onclick="showSection('users')">👥 المستخدمين</div>
-<button class="logout-btn" style="margin-top:40px;" onclick="logout()">🚪 خروج</button></div>
+<button class="logout-btn" onclick="logout()">🚪 خروج</button></div>
 <div class="main-content"><div class="header"><h2>لوحة تحكم المدير</h2><div id="dateDisplay"></div></div>
 <div class="stats"><div class="stat-card"><div class="stat-number" id="totalCount">0</div><div>إجمالي التوثيقات</div></div>
 <div class="stat-card"><div class="stat-number" id="usersCount">0</div><div>عدد المراقبين</div></div>
 <div class="stat-card"><div class="stat-number" id="todayCount">0</div><div>توثيقات اليوم</div></div></div>
-<div id="allSection"><div style="margin-bottom:20px;"><button class="btn btn-primary" onclick="exportCSV()">📥 تصدير CSV</button><button class="btn btn-primary" onclick="refreshData()" style="margin-right:10px;">🔄 تحديث</button></div>
-<div style="overflow-x:auto;"><table id="dataTable"><thead><tr><th>#</th><th>المراقب</th><th>العنصر</th><th>الشاهد</th><th>الصورة</th><th>التاريخ</th></tr></thead><tbody id="tableBody"></tbody></table></div></div>
+<div id="allSection"><div class="action-buttons"><button class="btn btn-primary" onclick="exportCSV()">📥 تصدير CSV</button><button class="btn btn-primary" onclick="refreshData()">🔄 تحديث</button></div>
+<div style="overflow-x:auto;"><table><thead><tr><th>#</th><th>المراقب</th><th>العنصر</th><th>الشاهد</th><th>الصورة</th><th>التاريخ</th></tr></thead><tbody id="tableBody"></tbody></table></div></div>
+<div id="usersSection" style="display:none;"><div class="sync-buttons"><button class="btn btn-success" onclick="showAddUserModal()">➕ إضافة مستخدم جديد</button><button class="btn btn-primary" onclick="loadUsers()">🔄 تحديث القائمة</button></div>
+<div style="overflow-x:auto;margin-top:20px;"><table><thead><tr><th>#</th><th>اسم المستخدم</th><th>الاسم الكامل</th><th>النوع</th><th>الإجراءات</th></tr></thead><tbody id="usersTableBody"></tbody></table></div></div>
 <div id="syncSection" style="display:none;"><div class="sync-status" id="syncStatus"></div><div class="sync-buttons"><button class="btn btn-primary" onclick="syncToCloud()">☁️ مزامنة إلى السحابة</button><button class="btn btn-success" onclick="syncFromCloud()">📥 جلب من السحابة</button></div>
-<div style="background:white;border-radius:15px;padding:20px;margin-top:20px;"><h4>ℹ️ حول المزامنة</h4><p>• "مزامنة إلى السحابة": رفع التوثيقات المحلية إلى Supabase</p><p>• "جلب من السحابة": تحميل التوثيقات من Supabase إلى الجهاز</p><p>• ملاحظة: يجب إعداد Supabase أولاً</p></div></div>
-<div id="usersSection" style="display:none;"><div style="background:white;border-radius:15px;padding:20px;"><h4>المستخدمين المسجلين</h4><table><thead><tr><th>المستخدم</th><th>الاسم الكامل</th><th>النوع</th></tr></thead><tbody id="usersTableBody"></tbody></table></div></div></div>
+<div style="background:white;border-radius:15px;padding:20px;margin-top:20px;"><h4>ℹ️ حول المزامنة</h4><p>• "مزامنة إلى السحابة": رفع التوثيقات المحلية إلى Supabase</p><p>• "جلب من السحابة": تحميل التوثيقات من Supabase إلى الجهاز</p><p>• ملاحظة: يجب إعداد Supabase أولاً في متغيرات البيئة</p></div></div></div>
+<div id="addUserModal" class="modal"><div class="modal-content"><h3>➕ إضافة مستخدم جديد</h3><input type="text" id="newUsername" placeholder="اسم المستخدم" required><input type="text" id="newFullName" placeholder="الاسم الكامل"><input type="password" id="newPassword" placeholder="كلمة السر" value="pass123"><div class="modal-buttons"><button class="btn btn-success" onclick="addUser()">إضافة</button><button class="btn btn-danger" onclick="closeAddUserModal()">إلغاء</button></div></div></div>
+<div id="editUserModal" class="modal"><div class="modal-content"><h3>✏️ تعديل مستخدم</h3><input type="hidden" id="editUserId"><input type="text" id="editFullName" placeholder="الاسم الكامل"><input type="password" id="editPassword" placeholder="كلمة سر جديدة (اتركها فارغة إذا لا تريد تغييرها)"><div class="modal-buttons"><button class="btn btn-primary" onclick="updateUser()">حفظ التغييرات</button><button class="btn btn-danger" onclick="closeEditUserModal()">إلغاء</button></div></div></div>
 <script>
 let allData=[];
 async function refreshData(){
@@ -592,6 +741,62 @@ async function refreshData(){
         else{tbody.innerHTML=allData.map((item,i)=>`<tr><td>${i+1}</td><td>${item.username}</td><td>العنصر ${item.element_id}</td><td>${item.witness_text.substring(0,40)}...</td><td><img src="/${item.image_path}" class="evidence-img" onerror="this.src='https://via.placeholder.com/50?text=لا+صورة'" onclick="window.open('/${item.image_path}')"></td><td>${new Date(item.created_at).toLocaleDateString('ar-SA')}</td></tr>`).join('');}
     }
 }
+async function loadUsers(){
+    const response=await fetch('/api/admin/users');
+    const data=await response.json();
+    if(data.success){
+        const tbody=document.getElementById('usersTableBody');
+        tbody.innerHTML=data.data.map((user,i)=>`<tr><td>${i+1}</td><td>${user.username}</td><td>${user.full_name||'-'}</td><td>${user.type==='admin'?'مدير':'مراقب'}</td><td>${user.username!=='admin'?`<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name||''}')" style="margin-left:5px;">✏️ تعديل</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️ حذف</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑 إعادة تعيين</button>`:'<span style="color:#999;">لا يمكن تعديل المدير</span>'}</td></tr>`).join('');
+    }
+}
+function showAddUserModal(){document.getElementById('addUserModal').style.display='flex';}
+function closeAddUserModal(){document.getElementById('addUserModal').style.display='none';document.getElementById('newUsername').value='';document.getElementById('newFullName').value='';document.getElementById('newPassword').value='pass123';}
+async function addUser(){
+    const username=document.getElementById('newUsername').value;
+    const full_name=document.getElementById('newFullName').value;
+    const password=document.getElementById('newPassword').value;
+    if(!username){alert('يرجى إدخال اسم المستخدم');return;}
+    const response=await fetch('/api/admin/add-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,full_name})});
+    const result=await response.json();
+    if(result.success){alert('✅ '+result.message);closeAddUserModal();loadUsers();refreshData();}
+    else{alert('❌ '+result.error);}
+}
+let currentEditId=null,currentEditUsername=null;
+function showEditUserModal(id,username,full_name){
+    currentEditId=id;currentEditUsername=username;
+    document.getElementById('editUserId').value=id;
+    document.getElementById('editFullName').value=full_name||'';
+    document.getElementById('editPassword').value='';
+    document.getElementById('editUserModal').style.display='flex';
+}
+function closeEditUserModal(){document.getElementById('editUserModal').style.display='none';currentEditId=null;currentEditUsername=null;}
+async function updateUser(){
+    const full_name=document.getElementById('editFullName').value;
+    const password=document.getElementById('editPassword').value;
+    const body={id:currentEditId};
+    if(full_name)body.full_name=full_name;
+    if(password)body.password=password;
+    const response=await fetch('/api/admin/update-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const result=await response.json();
+    if(result.success){alert('✅ '+result.message);closeEditUserModal();loadUsers();refreshData();}
+    else{alert('❌ '+result.error);}
+}
+async function deleteUser(id,username){
+    if(confirm(`هل أنت متأكد من حذف المستخدم "${username}"؟ سيتم حذف جميع توثيقاته أيضاً.`)){
+        const response=await fetch('/api/admin/delete-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,username})});
+        const result=await response.json();
+        if(result.success){alert('✅ '+result.message);loadUsers();refreshData();}
+        else{alert('❌ '+result.error);}
+    }
+}
+async function resetPassword(id){
+    const newPassword=prompt('أدخل كلمة السر الجديدة (اتركها فارغة لاستخدام الافتراضي pass123)');
+    if(newPassword===null)return;
+    const response=await fetch('/api/admin/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,new_password:newPassword||'pass123'})});
+    const result=await response.json();
+    if(result.success){alert('✅ '+result.message);}
+    else{alert('❌ '+result.error);}
+}
 async function syncToCloud(){
     const status=document.getElementById('syncStatus');
     status.style.display='block';status.innerHTML='⏳ جاري المزامنة إلى السحابة...';
@@ -606,7 +811,7 @@ async function syncFromCloud(){
     status.style.display='block';status.innerHTML='⏳ جاري الجلب من السحابة...';
     const response=await fetch('/api/sync-from-cloud',{method:'POST'});
     const result=await response.json();
-    if(result.success){status.innerHTML=`✅ تم الجلب بنجاح! ${result.synced} توثيق.`;refreshData();}
+    if(result.success){status.innerHTML=`✅ تم الجلب بنجاح! ${result.synced} توثيق.`;refreshData();loadUsers();}
     else{status.innerHTML=`❌ خطأ: ${result.error||'فشل الجلب'}`;}
     setTimeout(()=>status.style.display='none',3000);
 }
@@ -620,24 +825,11 @@ function exportCSV(){
 }
 function showSection(section){
     document.getElementById('allSection').style.display=section==='all'?'block':'none';
-    document.getElementById('syncSection').style.display=section==='sync'?'block':'none';
     document.getElementById('usersSection').style.display=section==='users'?'block':'none';
+    document.getElementById('syncSection').style.display=section==='sync'?'block':'none';
+    document.querySelectorAll('.nav-item').forEach((item,idx)=>{item.classList.remove('active');});
+    event.target.classList.add('active');
     if(section==='users')loadUsers();
-}
-function loadUsers(){
-    document.getElementById('usersTableBody').innerHTML=`
-        <tr><td>admin</td><td>مدير النظام</td><td>مدير</td></tr>
-        <tr><td>observer1</td><td>المراقب الأول</td><td>مراقب</td></tr>
-        <tr><td>observer2</td><td>المراقب الثاني</td><td>مراقب</td></tr>
-        <tr><td>observer3</td><td>المراقب الثالث</td><td>مراقب</td></tr>
-        <tr><td>observer4</td><td>المراقب الرابع</td><td>مراقب</td></tr>
-        <tr><td>observer5</td><td>المراقب الخامس</td><td>مراقب</td></tr>
-        <tr><td>observer6</td><td>المراقب السادس</td><td>مراقب</td></tr>
-        <tr><td>observer7</td><td>المراقب السابع</td><td>مراقب</td></tr>
-        <tr><td>observer8</td><td>المراقب الثامن</td><td>مراقب</td></tr>
-        <tr><td>observer9</td><td>المراقب التاسع</td><td>مراقب</td></tr>
-        <tr><td>observer10</td><td>المراقب العاشر</td><td>مراقب</td></tr>
-    `;
 }
 async function logout(){await fetch('/api/logout',{method:'POST'});window.location.href='/';}
 document.getElementById('dateDisplay').innerText=new Date().toLocaleDateString('ar-SA');
