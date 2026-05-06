@@ -1014,7 +1014,7 @@ def save_evidence():
     element_title = ELEMENTS[element_id]['title']
     
     filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.jpg"
-    filepath = os.path.join('static', 'images', filename)
+    filepath = f"static/images/{filename}"
     
     if 'base64,' in image_data:
         image_data = image_data.split('base64,')[1]
@@ -1052,8 +1052,16 @@ def get_my_evidences():
     rows = c.fetchall()
     conn.close()
     
-    data = [{'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3],
-             'witness_id': r[4], 'witness_text': r[5], 'image_path': r[6], 'created_at': r[8]} for r in rows]
+    data = []
+    for r in rows:
+        image_path = r[6]
+        # تحويل مسار Windows إلى مسار ويب
+        if image_path:
+            image_path = image_path.replace('\\', '/')
+        data.append({
+            'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3],
+            'witness_id': r[4], 'witness_text': r[5], 'image_path': image_path, 'created_at': r[8]
+        })
     return jsonify({'success': True, 'data': data})
 
 @app.route('/api/admin/all-evidences', methods=['GET'])
@@ -1067,8 +1075,15 @@ def admin_all_evidences():
     rows = c.fetchall()
     conn.close()
     
-    data = [{'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3],
-             'witness_id': r[4], 'witness_text': r[5], 'image_path': r[6], 'created_at': r[8]} for r in rows]
+    data = []
+    for r in rows:
+        image_path = r[6]
+        if image_path:
+            image_path = image_path.replace('\\', '/')
+        data.append({
+            'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3],
+            'witness_id': r[4], 'witness_text': r[5], 'image_path': image_path, 'created_at': r[8]
+        })
     return jsonify({'success': True, 'data': data})
 
 @app.route('/api/sync-to-cloud', methods=['POST'])
