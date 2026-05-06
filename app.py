@@ -1262,7 +1262,7 @@ def save_evidence():
         
         evidence_data = {
             'username': session['username'],
-            'element_id': element_id,
+            'element_id': str(element_id),  # تأكد من تحويله إلى نص
             'element_title': element_title,
             'witness_id': witness_id,
             'witness_text': witness_text,
@@ -1277,7 +1277,10 @@ def save_evidence():
         )
         
         if db_response.status_code not in [200, 201]:
-            return jsonify({'success': False, 'error': f'فشل حفظ البيانات: {db_response.status_code}'})
+            # طباعة الخطأ التفصيلي
+            error_detail = db_response.text
+            print(f"Supabase Error: {error_detail}")
+            return jsonify({'success': False, 'error': f'فشل حفظ البيانات: {db_response.status_code} - {error_detail}'})
         
         # 3. أيضاً حفظ محلياً كنسخة احتياطية (اختياري)
         try:
