@@ -781,6 +781,8 @@ function toggleSidebar(){
     }
 }
 document.getElementById('menuToggleBtn').onclick = toggleSidebar;
+document.getElementById('switchCameraBtn').onclick = switchCamera;
+document.getElementById('uploadImageBtn').onclick = uploadFromGallery;
 </script>
 </body>
 </html>
