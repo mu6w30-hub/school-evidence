@@ -801,7 +801,7 @@ function displayElements(){
         const list=document.getElementById(`witnesses-${id}`);
         element.witnesses.forEach((text,idx)=>{
             const div=document.createElement('div');div.className='witness-item';
-            div.innerHTML=`<span class="witness-text">${idx+1}. ${text}</span><span class="camera-icon" onclick="openCamera(${id},${idx+1})">📷</span>`;
+            div.innerHTML=`<span class="witness-text">${idx+1}. ${text}</span><span class="camera-icon" onclick="openCamera('${id}',${idx+1})">📷</span>`;
             list.appendChild(div);
         });
     }
@@ -1187,7 +1187,7 @@ def save_evidence():
         return jsonify({'success': False, 'error': 'غير مسجل دخول'})
     
     data = request.json
-    element_id = int(data.get('element_id'))
+    element_id = data.get('element_id')
     witness_id = int(data.get('witness_id'))
     image_data = data.get('image')
     
