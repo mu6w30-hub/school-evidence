@@ -1323,6 +1323,7 @@ def get_my_evidences():
             
             if response.status_code == 200:
                 data = response.json()
+                # تنسيق البيانات لتتناسب مع ما يتوقعه التطبيق
                 formatted_data = []
                 for item in data:
                     formatted_data.append({
@@ -1332,7 +1333,6 @@ def get_my_evidences():
                         'element_title': item.get('element_title'),
                         'witness_id': item.get('witness_id'),
                         'witness_text': item.get('witness_text'),
-                        'image_path': item.get('image_url'),
                         'image_url': item.get('image_url'),
                         'created_at': item.get('created_at')
                     })
@@ -1352,7 +1352,7 @@ def get_my_evidences():
         image_url = r[7] if r[7] else (f"/static/images/{os.path.basename(r[6])}" if r[6] else None)
         data.append({
             'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3],
-            'witness_id': r[4], 'witness_text': r[5], 'image_path': image_url, 'image_url': image_url, 'created_at': r[8]
+            'witness_id': r[4], 'witness_text': r[5], 'image_url': image_url, 'created_at': r[8]
         })
     return jsonify({'success': True, 'data': data})
 
@@ -1361,6 +1361,39 @@ def admin_all_evidences():
     if 'username' not in session or session.get('username') != 'admin':
         return jsonify({'success': False, 'error': 'غير مصرح'})
     
+    # محاولة الجلب من Supabase أولاً
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}'
+            }
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/evidences?order=created_at.desc",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                # تنسيق البيانات لتتناسب مع ما يتوقعه التطبيق
+                formatted_data = []
+                for item in data:
+                    formatted_data.append({
+                        'id': item.get('id'),
+                        'username': item.get('username'),
+                        'element_id': item.get('element_id'),
+                        'element_title': item.get('element_title'),
+                        'witness_id': item.get('witness_id'),
+                        'witness_text': item.get('witness_text'),
+                        'image_url': item.get('image_url'),
+                        'created_at': item.get('created_at')
+                    })
+                return jsonify({'success': True, 'data': formatted_data})
+        except Exception as e:
+            print(f"خطأ في جلب البيانات من Supabase: {e}")
+    
+    # الرجوع إلى قاعدة البيانات المحلية كنسخة احتياطية
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''SELECT * FROM evidences ORDER BY created_at DESC''')
@@ -1369,12 +1402,10 @@ def admin_all_evidences():
     
     data = []
     for r in rows:
-        image_path = r[6]
-        if image_path:
-            image_path = image_path.replace('\\', '/')
+        image_url = r[7] if r[7] else (f"/static/images/{os.path.basename(r[6])}" if r[6] else None)
         data.append({
             'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3],
-            'witness_id': r[4], 'witness_text': r[5], 'image_path': image_path, 'created_at': r[8]
+            'witness_id': r[4], 'witness_text': r[5], 'image_url': image_url, 'created_at': r[8]
         })
     return jsonify({'success': True, 'data': data})
 
@@ -1384,7 +1415,13 @@ def api_sync_to_cloud():
         return jsonify({'success': False, 'error': 'غير مصرح'})
     result = sync_to_supabase()
     return jsonify(result)
-
+@app.route('/api/status', methods=['GET'])
+def status():
+    return jsonify({
+        'status': 'running',
+        'supabase_configured': bool(SUPABASE_URL and SUPABASE_KEY),
+        'database_path': DB_PATH
+    })
 @app.route('/api/sync-from-cloud', methods=['POST'])
 def api_sync_from_cloud():
     if 'username' not in session or session.get('username') != 'admin':
