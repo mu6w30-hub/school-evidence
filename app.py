@@ -384,9 +384,9 @@ def init_local_db():
     # إضافة 11 مستخدم (مدير + 10 مراقبين)
     users = [
         ('admin', 'admin123', 'مدير النظام'),
-        ('observer1', 'password123', 'المراقب الأول'),
-        ('observer2', 'pass123', 'المراقب الثاني'),
-        ('observer3', 'pass123', 'المراقب الثالث'),
+        ('عادل', '123', 'المراقب الأول'),
+        ('حسن', '123', 'المراقب الثاني'),
+        ('3', '123', 'المراقب الثالث'),
         ('observer4', 'pass123', 'المراقب الرابع'),
         ('observer5', 'pass123', 'المراقب الخامس'),
         ('observer6', 'pass123', 'المراقب السادس'),
@@ -604,13 +604,8 @@ video{width:100%;border-radius:15px}
 <canvas id="canvas" style="display:none"></canvas>
 <script>
 const elements = {{ elements | tojson }};
-async function openCamera(elementId,witnessId){
-    currentElementId=elementId;currentWitnessId=witnessId;
-    document.getElementById('cameraModal').style.display='block';
-    try{stream=await navigator.mediaDevices.getUserMedia({video:true});document.getElementById('video').srcObject=stream;}
-    catch(err){alert('لا يمكن الوصول إلى الكاميرا: '+err.message);}
-}
-let currentFacingMode = 'environment'; // 'environment' = خلفية, 'user' = أمامية
+let currentElementId=null,currentWitnessId=null,stream=null;
+let currentFacingMode = 'environment';
 function showSection(section){
     document.getElementById('dashboardSection').style.display=section==='dashboard'?'block':'none';
     document.getElementById('statsSection').style.display=section==='stats'?'block':'none';
@@ -683,6 +678,32 @@ function closeCamera(){
         stream=null;
     }
     document.getElementById('cameraModal').style.display='none';
+}
+function switchCamera(){
+    if(currentFacingMode === 'environment'){
+        currentFacingMode = 'user';
+    } else {
+        currentFacingMode = 'environment';
+    }
+    // إعادة تشغيل الكاميرا بالوضع الجديد
+    if(stream){
+        stream.getTracks().forEach(track => track.stop());
+    }
+    navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: currentFacingMode } }
+    }).then(newStream => {
+        stream = newStream;
+        document.getElementById('video').srcObject = stream;
+    }).catch(err => {
+        // إذا فشلت الكاميرا المحددة، جرب الكاميرا الافتراضية
+        navigator.mediaDevices.getUserMedia({ video: true }).then(fallbackStream => {
+            stream = fallbackStream;
+            document.getElementById('video').srcObject = stream;
+            currentFacingMode = 'environment';
+        }).catch(e => {
+            alert('لا يمكن تبديل الكاميرا: ' + e.message);
+        });
+    });
 }
 async function loadStats(){
     const response=await fetch('/api/get-my-evidences');
@@ -1021,8 +1042,8 @@ if __name__ == '__main__':
     print(f"✅ Supabase: {'متصل' if SUPABASE_URL and SUPABASE_KEY else 'غير مهيأ'}")
     print("=" * 60)
     print("🔐 بيانات الدخول:")
-    print("   admin / admin123 (مدير)")
-    print("   observer1 / password123 (مراقب 1)")
-    print("   observer2-10 / pass123 (مراقبين)")
+    #print("   admin / admin123 (مدير)")
+    #print("   observer1 / password123 (مراقب 1)")
+    #print("   observer2-10 / pass123 (مراقبين)")
     print("=" * 60)
     app.run(host='0.0.0.0', port=10000, debug=False)
