@@ -545,7 +545,7 @@ button:hover{transform:translateY(-2px);box-shadow:0 5px 15px rgba(0,0,0,0.2)}
 <body>
 <div class="login-container"><div class="logo">📸</div><h1>نظام توثيق الشواهد</h1>
 <form id="loginForm"><input type="text" id="username" placeholder="اسم المستخدم" required><input type="password" id="password" placeholder="كلمة السر" required><button type="submit">دخول</button></form>
-<div class="error" id="errorMsg"></div><div class="info">🔐 admin / admin123<br>🔐 observer1 / password123<br>🔐 observer2-10 / pass123</div></div>
+<div class="error" id="errorMsg"></div><div class="info">🔐 </div></div>
 <script>
 document.getElementById('loginForm').addEventListener('submit',async(e)=>{
 e.preventDefault();const u=document.getElementById('username').value,p=document.getElementById('password').value;
