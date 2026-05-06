@@ -771,7 +771,16 @@ video{width:100%;border-radius:15px}
 <div class="nav-item active" onclick="showSection('dashboard');toggleSidebar()"><span style="margin-left:10px;">📋</span> لوحة التوثيق</div>
 <div class="nav-item" onclick="showSection('stats');toggleSidebar()"><span style="margin-left:10px;">📊</span> إحصائياتي</div>
 <div class="nav-item" onclick="showSection('history');toggleSidebar()"><span style="margin-left:10px;">🖼️</span> توثيقاتي السابقة</div>
-<button class="logout-btn" onclick="logout()">🚪 تسجيل خروج</button></div>
+async function logout(){
+    if(confirm('هل أنت متأكد من تسجيل الخروج؟')){
+        try {
+            await fetch('/api/logout',{method:'POST'});
+            window.location.href='/';
+        } catch(e) {
+            window.location.href='/';
+        }
+    }
+}</div>
 <div class="main-content">
 <div style="display:flex; align-items:center; margin-bottom:10px;">
     <button id="menuToggleBtn" style="background:#667eea; color:white; border:none; border-radius:8px; padding:10px 15px; font-size:16px; cursor:pointer; margin-left:10px;">☰ القائمة</button>
@@ -1074,6 +1083,23 @@ function toggleSidebar(){
 document.getElementById('menuToggleBtn').onclick = toggleSidebar;
 document.getElementById('switchCameraBtn').onclick = switchCamera;
 document.getElementById('uploadImageBtn').onclick = uploadFromGallery;
+async function deleteEvidence(id){
+    if(confirm('هل أنت متأكد من حذف هذا التوثيق؟')){
+        const response = await fetch('/api/delete-evidence',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({id:id})
+        });
+        const result = await response.json();
+        if(result.success){
+            alert('✅ تم الحذف بنجاح');
+            loadHistory();
+            loadStats();
+        } else {
+            alert('❌ خطأ: '+result.error);
+        }
+    }
+}
 </script>
 </body>
 </html>
@@ -1254,15 +1280,17 @@ async function loadUsers(){
         const lastActivity={};
         allData.forEach(e=>{if(!lastActivity[e.username]||e.created_at>lastActivity[e.username])lastActivity[e.username]=e.created_at;});
         const tbody=document.getElementById('usersTableBody');
-        tbody.innerHTML=data.data.map((user,i)=>`<tr>
-            <td>${i+1}</td>
-            <td>${user.username}</td>
-            <td>${user.full_name||'-'}</td>
-            <td>${user.username==='admin'?'مدير':'مراقب'}</td>
-            <td>${userStats[user.username]||0}</td>
-            <td>${lastActivity[user.username]?.substring(0,10)||'-'}</td>
-            <td>${user.username!=='admin'?`<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name||''}')" style="margin-left:5px;">✏️</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑</button>`:'لا يمكن تعديل'}</td>
-        </tr>`).join('');
+        tbody.innerHTML=data.data.map((user,i)=>`
+            <tr>
+                <td>${i+1}</td>
+                <td>${user.username}</td>
+                <td>${user.full_name||'-'}</td>
+                <td>${user.username==='admin'?'مدير':'مراقب'}</td>
+                <td>${userStats[user.username]||0}</td>
+                <td>${lastActivity[user.username]?.substring(0,10)||'-'}</td>
+                <td>${user.username!=='admin'?`<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name||''}')" style="margin-left:5px;">✏️</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑</button>`:'لا يمكن تعديل'}</td>
+            </tr>
+        `).join('');
         drawUserChart(userStats);
         updateRankings(userStats);
     }
