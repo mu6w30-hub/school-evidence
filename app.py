@@ -667,30 +667,7 @@ async function capturePhoto(){
     }
 }
 
-function uploadFromGallery(){
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = async (e) => {
-        const file = e.target.files[0];
-        if(file){
-            const reader = new FileReader();
-            reader.onload = async (event) => {
-                const imageData = event.target.result;
-                const response = await fetch('/api/save-evidence',{
-                    method:'POST',
-                    headers:{'Content-Type':'application/json'},
-                    body:JSON.stringify({element_id:currentElementId,witness_id:currentWitnessId,image:imageData})
-                });
-                const result = await response.json();
-                if(result.success){alert('✅ تم التوثيق بنجاح!');closeCamera();if(document.getElementById('statsSection').style.display==='block')loadStats();if(document.getElementById('historySection').style.display==='block')loadHistory();}
-                else alert('❌ خطأ: '+result.error);
-            };
-            reader.readAsDataURL(file);
-        }
-    };
-    input.click();
-}
+
 function closeCamera(){
     if(stream){
         stream.getTracks().forEach(track=>track.stop());
@@ -723,6 +700,31 @@ function switchCamera(){
             alert('لا يمكن تبديل الكاميرا: ' + e.message);
         });
     });
+}
+
+function uploadFromGallery(){
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if(file){
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                const imageData = event.target.result;
+                const response = await fetch('/api/save-evidence',{
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({element_id:currentElementId,witness_id:currentWitnessId,image:imageData})
+                });
+                const result = await response.json();
+                if(result.success){alert('✅ تم التوثيق بنجاح!');closeCamera();if(document.getElementById('statsSection').style.display==='block')loadStats();if(document.getElementById('historySection').style.display==='block')loadHistory();}
+                else alert('❌ خطأ: '+result.error);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+    input.click();
 }
 async function loadStats(){
     const response=await fetch('/api/get-my-evidences');
