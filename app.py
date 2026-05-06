@@ -1211,18 +1211,45 @@ def save_evidence():
         return jsonify({'success': False, 'error': 'Supabase غير مهيأ'})
     
     try:
-        # 1. رفع الصورة إلى Supabase Storage
+        # 1. التأكد من وجود Bucket في Supabase Storage
         headers = {
+            'apikey': SUPABASE_KEY,
+            'Authorization': f'Bearer {SUPABASE_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        # محاولة إنشاء bucket إذا لم يكن موجوداً
+        bucket_url = f"{SUPABASE_URL}/storage/v1/bucket/evidence"
+        bucket_response = requests.get(bucket_url, headers=headers)
+        
+        if bucket_response.status_code == 404:
+            # إنشاء bucket جديد
+            bucket_data = {
+                'id': 'evidence',
+                'name': 'evidence',
+                'public': True
+            }
+            create_bucket_response = requests.post(
+                f"{SUPABASE_URL}/storage/v1/bucket",
+                headers=headers,
+                json=bucket_data
+            )
+            # إذا كان البوكيت موجوداً مسبقاً أو تم إنشاؤه بنجاح
+            if create_bucket_response.status_code not in [200, 201, 409]:
+                return jsonify({'success': False, 'error': 'فشل إنشاء مجلد التخزين'})
+        
+        # 2. رفع الصورة إلى Supabase Storage
+        upload_headers = {
             'apikey': SUPABASE_KEY,
             'Authorization': f'Bearer {SUPABASE_KEY}',
             'Content-Type': 'image/jpeg'
         }
         
         image_upload_url = f"{SUPABASE_URL}/storage/v1/object/evidence/{filename}"
-        image_response = requests.post(image_upload_url, headers=headers, data=image_bytes)
+        image_response = requests.post(image_upload_url, headers=upload_headers, data=image_bytes)
         
         if image_response.status_code not in [200, 201]:
-            return jsonify({'success': False, 'error': f'فشل رفع الصورة: {image_response.status_code}'})
+            return jsonify({'success': False, 'error': f'فشل رفع الصورة: {image_response.status_code} - {image_response.text}'})
         
         image_url = f"{SUPABASE_URL}/storage/v1/object/public/evidence/{filename}"
         
