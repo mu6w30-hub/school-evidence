@@ -600,11 +600,17 @@ video{width:100%;border-radius:15px}
 <div id="dashboardSection"><div class="elements-grid" id="elementsGrid"></div></div>
 <div id="statsSection" style="display:none;"><div style="background:white;border-radius:15px;padding:20px;"><h3>📊 إحصائيات التوثيقات</h3><div id="statsNumbers" style="margin-top:20px;"></div></div></div>
 <div id="historySection" style="display:none;"><div style="background:white;border-radius:15px;padding:20px;"><h3>🖼️ توثيقاتي السابقة</h3><div id="historyGrid" class="history-grid"></div></div></div></div>
-<div id="cameraModal" class="modal"><div class="modal-content"><video id="video" autoplay playsinline></video><button class="capture-btn" onclick="capturePhoto()">📷 التقاط صورة</button><button class="capture-btn close-modal" onclick="closeCamera()">إلغاء</button></div></div>
+<div id="cameraModal" class="modal"><div class="modal-content"><video id="video" autoplay playsinline></video><div style="display:flex; gap:10px; margin-top:15px;"><button class="capture-btn" id="switchCameraBtn" style="background:#17a2b8; flex:1;">🔄 تبديل الكاميرا</button><button class="capture-btn" id="uploadImageBtn" style="background:#6c757d; flex:1;">📁 اختيار من المعرض</button></div><button class="capture-btn" onclick="capturePhoto()" style="margin-top:10px;">📷 التقاط صورة</button><button class="capture-btn close-modal" onclick="closeCamera()" style="margin-top:10px; background:#dc3545;">إلغاء</button></div></div>
 <canvas id="canvas" style="display:none"></canvas>
 <script>
 const elements = {{ elements | tojson }};
-let currentElementId=null,currentWitnessId=null,stream=null;
+async function openCamera(elementId,witnessId){
+    currentElementId=elementId;currentWitnessId=witnessId;
+    document.getElementById('cameraModal').style.display='block';
+    try{stream=await navigator.mediaDevices.getUserMedia({video:true});document.getElementById('video').srcObject=stream;}
+    catch(err){alert('لا يمكن الوصول إلى الكاميرا: '+err.message);}
+}
+let currentFacingMode = 'environment'; // 'environment' = خلفية, 'user' = أمامية
 function showSection(section){
     document.getElementById('dashboardSection').style.display=section==='dashboard'?'block':'none';
     document.getElementById('statsSection').style.display=section==='stats'?'block':'none';
@@ -634,15 +640,50 @@ async function openCamera(elementId,witnessId){
 }
 async function capturePhoto(){
     const video=document.getElementById('video');const canvas=document.getElementById('canvas');
-    canvas.width=video.videoWidth;canvas.height=video.videoHeight;
-    canvas.getContext('2d').drawImage(video,0,0);
-    const imageData=canvas.toDataURL('image/jpeg',0.9);
-    const response=await fetch('/api/save-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({element_id:currentElementId,witness_id:currentWitnessId,image:imageData})});
-    const result=await response.json();
-    if(result.success){alert('✅ تم التوثيق بنجاح!');closeCamera();if(document.getElementById('statsSection').style.display==='block')loadStats();if(document.getElementById('historySection').style.display==='block')loadHistory();}
-    else alert('❌ خطأ: '+result.error);
+    if(video.videoWidth && video.videoHeight){
+        canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+        canvas.getContext('2d').drawImage(video,0,0);
+        const imageData=canvas.toDataURL('image/jpeg',0.9);
+        const response=await fetch('/api/save-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({element_id:currentElementId,witness_id:currentWitnessId,image:imageData})});
+        const result=await response.json();
+        if(result.success){alert('✅ تم التوثيق بنجاح!');closeCamera();if(document.getElementById('statsSection').style.display==='block')loadStats();if(document.getElementById('historySection').style.display==='block')loadHistory();}
+        else alert('❌ خطأ: '+result.error);
+    } else {
+        alert('❌ لم يتم التقاط الصورة، تأكد من تشغيل الكاميرا');
+    }
 }
-function closeCamera(){if(stream){stream.getTracks().forEach(track=>track.stop());stream=null;}document.getElementById('cameraModal').style.display='none';}
+
+function uploadFromGallery(){
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if(file){
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                const imageData = event.target.result;
+                const response = await fetch('/api/save-evidence',{
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({element_id:currentElementId,witness_id:currentWitnessId,image:imageData})
+                });
+                const result = await response.json();
+                if(result.success){alert('✅ تم التوثيق بنجاح!');closeCamera();if(document.getElementById('statsSection').style.display==='block')loadStats();if(document.getElementById('historySection').style.display==='block')loadHistory();}
+                else alert('❌ خطأ: '+result.error);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+    input.click();
+}
+function closeCamera(){
+    if(stream){
+        stream.getTracks().forEach(track=>track.stop());
+        stream=null;
+    }
+    document.getElementById('cameraModal').style.display='none';
+}
 async function loadStats(){
     const response=await fetch('/api/get-my-evidences');
     const data=await response.json();
@@ -665,6 +706,8 @@ async function logout(){await fetch('/api/logout',{method:'POST'});window.locati
 document.getElementById('dateDisplay').innerText=new Date().toLocaleDateString('ar-SA');
 document.getElementById('usernameDisplay').innerText='{{ username }}';
 displayElements();
+document.getElementById('switchCameraBtn').onclick = switchCamera;
+document.getElementById('uploadImageBtn').onclick = uploadFromGallery;
 </script>
 </body>
 </html>
