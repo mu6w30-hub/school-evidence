@@ -14,6 +14,8 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this-12345'
 CORS(app)
+# أضف هذا السطر
+app.static_folder = 'static'
 
 # ============ إعداد المسارات للملفات ============
 BASE_DIR = os.environ.get('RENDER', False) and '/tmp' or os.getcwd()
@@ -732,13 +734,37 @@ async function loadStats(){
         document.getElementById('statsNumbers').innerHTML=html||'<p>لا توجد توثيقات بعد</p>';
     }
 }
+function gregorianToHijri(date){
+    const gDate = new Date(date);
+    const gYear = gDate.getFullYear();
+    const gMonth = gDate.getMonth() + 1;
+    const gDay = gDate.getDate();
+    const hijriDate = new Intl.DateTimeFormat('ar-TN-u-ca-islamic', {year:'numeric', month:'long', day:'numeric'}).format(gDate);
+    return hijriDate;
+}
 async function loadHistory(){
     const response=await fetch('/api/get-my-evidences');
     const data=await response.json();
     const grid=document.getElementById('historyGrid');
     if(data.success && data.data.length>0){
-        grid.innerHTML=data.data.map(item=>`<div class="history-card"><img src="/${item.image_path}" onerror="this.src='https://via.placeholder.com/150?text=صورة'"><p style="margin-top:8px;font-size:12px;">${item.element_title.substring(0,30)}</p><small>${new Date(item.created_at).toLocaleDateString('ar-SA')}</small></div>`).join('');
-    }else{grid.innerHTML='<p>لا توجد توثيقات سابقة</p>';}
+        grid.innerHTML=data.data.map((item,idx)=>{
+            const miladiDate = new Date(item.created_at);
+            const formattedMiladi = miladiDate.toLocaleDateString('ar-SA');
+            const hijriDate = gregorianToHijri(item.created_at);
+            return `<div class="history-card" style="position:relative; background:white; border-radius:12px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                <div style="background:linear-gradient(135deg,#1a2a6c,#b21f1f); color:white; padding:8px 12px; font-size:12px; display:flex; justify-content:space-between; flex-wrap:wrap;">
+                    <span>📅 ${formattedMiladi}</span>
+                    <span>🕌 ${hijriDate}</span>
+                    <span>📌 العنصر ${item.element_id} - الشاهد ${item.witness_id}</span>
+                </div>
+                <img src="/${item.image_path}" style="width:100%; height:180px; object-fit:cover;" onerror="this.src='https://via.placeholder.com/300x180?text=صورة+غير+متوفرة'">
+                <div style="padding:10px;">
+                    <p style="font-size:12px; color:#555; margin:0;">${item.element_title.substring(0,50)}</p>
+                    <p style="font-size:11px; color:#888; margin-top:5px;">${item.witness_text.substring(0,60)}...</p>
+                </div>
+            </div>`;
+        }).join('');
+    }else{grid.innerHTML='<p style="text-align:center; padding:20px;">📭 لا توجد توثيقات سابقة</p>';}
 }
 async function logout(){await fetch('/api/logout',{method:'POST'});window.location.href='/';}
 document.getElementById('dateDisplay').innerText=new Date().toLocaleDateString('ar-SA');
@@ -986,7 +1012,7 @@ def save_evidence():
     element_title = ELEMENTS[element_id]['title']
     
     filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.jpg"
-    filepath = os.path.join(STATIC_IMAGES_DIR, filename)
+    filepath = os.path.join('static/images', filename)
     
     if 'base64,' in image_data:
         image_data = image_data.split('base64,')[1]
