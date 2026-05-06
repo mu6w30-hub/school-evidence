@@ -15,9 +15,6 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this-12345'
 CORS(app)
-# إعداد المجلدات الثابتة
-app.static_folder = 'static'
-app.static_url_path = '/static'
 
 # ============ إعداد المسارات للملفات ============
 BASE_DIR = os.environ.get('RENDER', False) and '/tmp' or os.getcwd()
@@ -28,6 +25,13 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(STATIC_IMAGES_DIR, exist_ok=True)
 
 DB_PATH = os.path.join(DATA_DIR, 'evidence.db')
+
+# إعداد المجلدات الثابتة - تأكد من أن المسار مطلق وليس نسبي
+STATIC_FOLDER = os.path.join(BASE_DIR, 'static')
+app.static_folder = STATIC_FOLDER
+app.static_url_path = '/static'
+
+
 
 # ============ إعدادات Supabase ============
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
@@ -1187,8 +1191,13 @@ def save_evidence():
     witness_id = int(data.get('witness_id'))
     image_data = data.get('image')
     
-    witness_text = ELEMENTS[str(element_id)]['witnesses'][witness_id - 1]
-    element_title = ELEMENTS[str(element_id)]['title']
+    # تحويل element_id إلى str للوصول إلى ELEMENTS
+    element_id_str = str(element_id)
+    if element_id_str not in ELEMENTS:
+        return jsonify({'success': False, 'error': 'عنصر غير موجود'})
+    
+    witness_text = ELEMENTS[element_id_str]['witnesses'][witness_id - 1]
+    element_title = ELEMENTS[element_id_str]['title']
     
     filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.jpg"
     
@@ -1197,74 +1206,111 @@ def save_evidence():
     
     image_bytes = base64.b64decode(image_data)
     
-    # حفظ الصورة محلياً أولاً
-    local_image_path = os.path.join(STATIC_IMAGES_DIR, filename)
-    with open(local_image_path, 'wb') as f:
-        f.write(image_bytes)
+    # التحقق من إعدادات Supabase
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({'success': False, 'error': 'Supabase غير مهيأ'})
     
-    image_url = f"/static/images/{filename}"
-    
-    # حفظ في قاعدة البيانات المحلية (SQLite)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''INSERT INTO evidences (username, element_id, element_title, witness_id, witness_text, image_path, synced)
-                 VALUES (?, ?, ?, ?, ?, ?, 0)''',
-              (session['username'], element_id, element_title, witness_id, witness_text, local_image_path))
-    conn.commit()
-    conn.close()
-    
-    # محاولة الرفع إلى Supabase إذا تم تكوينه
-    if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        # 1. رفع الصورة إلى Supabase Storage
+        headers = {
+            'apikey': SUPABASE_KEY,
+            'Authorization': f'Bearer {SUPABASE_KEY}',
+            'Content-Type': 'image/jpeg'
+        }
+        
+        image_upload_url = f"{SUPABASE_URL}/storage/v1/object/evidence/{filename}"
+        image_response = requests.post(image_upload_url, headers=headers, data=image_bytes)
+        
+        if image_response.status_code not in [200, 201]:
+            return jsonify({'success': False, 'error': f'فشل رفع الصورة: {image_response.status_code}'})
+        
+        image_url = f"{SUPABASE_URL}/storage/v1/object/public/evidence/{filename}"
+        
+        # 2. حفظ البيانات في Supabase Table
+        db_headers = {
+            'apikey': SUPABASE_KEY,
+            'Authorization': f'Bearer {SUPABASE_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        evidence_data = {
+            'username': session['username'],
+            'element_id': element_id,
+            'element_title': element_title,
+            'witness_id': witness_id,
+            'witness_text': witness_text,
+            'image_url': image_url,
+            'created_at': datetime.now().isoformat()
+        }
+        
+        db_response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/evidences",
+            headers=db_headers,
+            json=evidence_data
+        )
+        
+        if db_response.status_code not in [200, 201]:
+            return jsonify({'success': False, 'error': f'فشل حفظ البيانات: {db_response.status_code}'})
+        
+        # 3. أيضاً حفظ محلياً كنسخة احتياطية (اختياري)
         try:
-            headers = {
-                'apikey': SUPABASE_KEY,
-                'Authorization': f'Bearer {SUPABASE_KEY}',
-                'Content-Type': 'image/jpeg'
-            }
+            local_image_path = os.path.join(STATIC_IMAGES_DIR, filename)
+            with open(local_image_path, 'wb') as f:
+                f.write(image_bytes)
             
-            image_upload_url = f"{SUPABASE_URL}/storage/v1/object/evidence/{filename}"
-            image_response = requests.post(image_upload_url, headers=headers, data=image_bytes)
-            
-            if image_response.status_code in [200, 201]:
-                cloud_image_url = f"{SUPABASE_URL}/storage/v1/object/public/evidence/{filename}"
-                
-                db_headers = {
-                    'apikey': SUPABASE_KEY,
-                    'Authorization': f'Bearer {SUPABASE_KEY}',
-                    'Content-Type': 'application/json'
-                }
-                
-                evidence_data = {
-                    'username': session['username'],
-                    'element_id': element_id,
-                    'element_title': element_title,
-                    'witness_id': witness_id,
-                    'witness_text': witness_text,
-                    'image_url': cloud_image_url
-                }
-                
-                requests.post(
-                    f"{SUPABASE_URL}/rest/v1/evidences",
-                    headers=db_headers,
-                    json=evidence_data
-                )
-                
-                # تحديث حالة المزامنة
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-                c.execute("UPDATE evidences SET synced = 1 WHERE image_path = ?", (local_image_path,))
-                conn.commit()
-                conn.close()
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('''INSERT INTO evidences (username, element_id, element_title, witness_id, witness_text, image_path, image_url, synced)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 1)''',
+                      (session['username'], element_id, element_title, witness_id, witness_text, local_image_path, image_url))
+            conn.commit()
+            conn.close()
         except Exception as e:
-            print(f"خطأ في رفع الصورة للسحابة: {e}")
-    
-    return jsonify({'success': True, 'image_url': image_url})
+            print(f"تحذير: فشل الحفظ المحلي: {e}")
+        
+        return jsonify({'success': True, 'image_url': image_url})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}) 
 
 @app.route('/api/get-my-evidences', methods=['GET'])
 def get_my_evidences():
     if 'username' not in session:
         return jsonify({'success': False, 'data': []})
     
+    # محاولة الجلب من Supabase أولاً
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}'
+            }
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/evidences?username=eq.{session['username']}&order=created_at.desc",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                formatted_data = []
+                for item in data:
+                    formatted_data.append({
+                        'id': item.get('id'),
+                        'username': item.get('username'),
+                        'element_id': item.get('element_id'),
+                        'element_title': item.get('element_title'),
+                        'witness_id': item.get('witness_id'),
+                        'witness_text': item.get('witness_text'),
+                        'image_path': item.get('image_url'),
+                        'image_url': item.get('image_url'),
+                        'created_at': item.get('created_at')
+                    })
+                return jsonify({'success': True, 'data': formatted_data})
+        except Exception as e:
+            print(f"خطأ في جلب البيانات من Supabase: {e}")
+    
+    # الرجوع إلى قاعدة البيانات المحلية كنسخة احتياطية
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''SELECT * FROM evidences WHERE username=? ORDER BY created_at DESC''', (session['username'],))
@@ -1273,16 +1319,10 @@ def get_my_evidences():
     
     data = []
     for r in rows:
-        image_path = r[6]
-        # تحويل مسار Windows إلى مسار ويب
-        if image_path:
-            image_path = image_path.replace('\\', '/')
-            # تحويل المسار إلى URL يمكن الوصول إليه
-            if image_path.startswith('/tmp') or image_path.startswith(STATIC_IMAGES_DIR):
-                image_path = '/static/images/' + os.path.basename(image_path)
+        image_url = r[7] if r[7] else (f"/static/images/{os.path.basename(r[6])}" if r[6] else None)
         data.append({
             'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3],
-            'witness_id': r[4], 'witness_text': r[5], 'image_path': image_path, 'created_at': r[8]
+            'witness_id': r[4], 'witness_text': r[5], 'image_path': image_url, 'image_url': image_url, 'created_at': r[8]
         })
     return jsonify({'success': True, 'data': data})
 
