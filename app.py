@@ -1014,7 +1014,7 @@ def save_evidence():
     element_title = ELEMENTS[element_id]['title']
     
     filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.jpg"
-    filepath = f"/static/images/{filename}"
+    filepath = os.path.join('static', 'images', filename)
     
     if 'base64,' in image_data:
         image_data = image_data.split('base64,')[1]
