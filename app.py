@@ -1,3 +1,4 @@
+
 from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -14,8 +15,9 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this-12345'
 CORS(app)
-# أضف هذا السطر
+# إعداد المجلدات الثابتة
 app.static_folder = 'static'
+app.static_url_path = '/static'
 
 # ============ إعداد المسارات للملفات ============
 BASE_DIR = os.environ.get('RENDER', False) and '/tmp' or os.getcwd()
@@ -1185,8 +1187,8 @@ def save_evidence():
     witness_id = int(data.get('witness_id'))
     image_data = data.get('image')
     
-    witness_text = ELEMENTS[element_id]['witnesses'][witness_id - 1]
-    element_title = ELEMENTS[element_id]['title']
+    witness_text = ELEMENTS[str(element_id)]['witnesses'][witness_id - 1]
+    element_title = ELEMENTS[str(element_id)]['title']
     
     filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.jpg"
     
@@ -1195,46 +1197,66 @@ def save_evidence():
     
     image_bytes = base64.b64decode(image_data)
     
-    # رفع الصورة إلى Supabase Storage
-    headers = {
-        'apikey': SUPABASE_KEY,
-        'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Content-Type': 'image/jpeg'
-    }
+    # حفظ الصورة محلياً أولاً
+    local_image_path = os.path.join(STATIC_IMAGES_DIR, filename)
+    with open(local_image_path, 'wb') as f:
+        f.write(image_bytes)
     
-    image_upload_url = f"{SUPABASE_URL}/storage/v1/object/evidence/{filename}"
-    image_response = requests.post(image_upload_url, headers=headers, data=image_bytes)
+    image_url = f"/static/images/{filename}"
     
-    if image_response.status_code not in [200, 201]:
-        return jsonify({'success': False, 'error': 'فشل رفع الصورة إلى السحابة'})
+    # حفظ في قاعدة البيانات المحلية (SQLite)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''INSERT INTO evidences (username, element_id, element_title, witness_id, witness_text, image_path, synced)
+                 VALUES (?, ?, ?, ?, ?, ?, 0)''',
+              (session['username'], element_id, element_title, witness_id, witness_text, local_image_path))
+    conn.commit()
+    conn.close()
     
-    image_url = f"{SUPABASE_URL}/storage/v1/object/public/evidence/{filename}"
-    
-    # حفظ البيانات في Supabase Table
-    db_headers = {
-        'apikey': SUPABASE_KEY,
-        'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-    }
-    
-    evidence_data = {
-        'username': session['username'],
-        'element_id': element_id,
-        'element_title': element_title,
-        'witness_id': witness_id,
-        'witness_text': witness_text,
-        'image_url': image_url
-    }
-    
-    db_response = requests.post(
-        f"{SUPABASE_URL}/rest/v1/evidences",
-        headers=db_headers,
-        json=evidence_data
-    )
-    
-    if db_response.status_code not in [200, 201]:
-        return jsonify({'success': False, 'error': 'فشل حفظ البيانات في قاعدة البيانات'})
+    # محاولة الرفع إلى Supabase إذا تم تكوينه
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}',
+                'Content-Type': 'image/jpeg'
+            }
+            
+            image_upload_url = f"{SUPABASE_URL}/storage/v1/object/evidence/{filename}"
+            image_response = requests.post(image_upload_url, headers=headers, data=image_bytes)
+            
+            if image_response.status_code in [200, 201]:
+                cloud_image_url = f"{SUPABASE_URL}/storage/v1/object/public/evidence/{filename}"
+                
+                db_headers = {
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': f'Bearer {SUPABASE_KEY}',
+                    'Content-Type': 'application/json'
+                }
+                
+                evidence_data = {
+                    'username': session['username'],
+                    'element_id': element_id,
+                    'element_title': element_title,
+                    'witness_id': witness_id,
+                    'witness_text': witness_text,
+                    'image_url': cloud_image_url
+                }
+                
+                requests.post(
+                    f"{SUPABASE_URL}/rest/v1/evidences",
+                    headers=db_headers,
+                    json=evidence_data
+                )
+                
+                # تحديث حالة المزامنة
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("UPDATE evidences SET synced = 1 WHERE image_path = ?", (local_image_path,))
+                conn.commit()
+                conn.close()
+        except Exception as e:
+            print(f"خطأ في رفع الصورة للسحابة: {e}")
     
     return jsonify({'success': True, 'image_url': image_url})
 
@@ -1255,6 +1277,9 @@ def get_my_evidences():
         # تحويل مسار Windows إلى مسار ويب
         if image_path:
             image_path = image_path.replace('\\', '/')
+            # تحويل المسار إلى URL يمكن الوصول إليه
+            if image_path.startswith('/tmp') or image_path.startswith(STATIC_IMAGES_DIR):
+                image_path = '/static/images/' + os.path.basename(image_path)
         data.append({
             'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3],
             'witness_id': r[4], 'witness_text': r[5], 'image_path': image_path, 'created_at': r[8]
