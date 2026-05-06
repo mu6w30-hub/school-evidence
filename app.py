@@ -834,13 +834,117 @@ async function openCamera(elementId,witnessId){
 async function capturePhoto(){
     const video=document.getElementById('video');const canvas=document.getElementById('canvas');
     if(video.videoWidth && video.videoHeight){
+        // عرض الصورة للمعاينة
         canvas.width=video.videoWidth;canvas.height=video.videoHeight;
         canvas.getContext('2d').drawImage(video,0,0);
         const imageData=canvas.toDataURL('image/jpeg',0.9);
-        const response=await fetch('/api/save-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({element_id:currentElementId,witness_id:currentWitnessId,image:imageData})});
-        const result=await response.json();
-        if(result.success){alert('✅ تم التوثيق بنجاح!');closeCamera();if(document.getElementById('statsSection').style.display==='block')loadStats();if(document.getElementById('historySection').style.display==='block')loadHistory();}
-        else alert('❌ خطأ: '+result.error);
+        
+        // إظهار معاينة الصورة
+        const previewDiv = document.createElement('div');
+        previewDiv.style.position = 'fixed';
+        previewDiv.style.top = '0';
+        previewDiv.style.left = '0';
+        previewDiv.style.width = '100%';
+        previewDiv.style.height = '100%';
+        previewDiv.style.backgroundColor = 'rgba(0,0,0,0.9)';
+        previewDiv.style.zIndex = '2000';
+        previewDiv.style.display = 'flex';
+        previewDiv.style.flexDirection = 'column';
+        previewDiv.style.justifyContent = 'center';
+        previewDiv.style.alignItems = 'center';
+        
+        const img = document.createElement('img');
+        img.src = imageData;
+        img.style.maxWidth = '90%';
+        img.style.maxHeight = '70%';
+        img.style.borderRadius = '10px';
+        previewDiv.appendChild(img);
+        
+        // أزرار التأكيد والإلغاء
+        const btnContainer = document.createElement('div');
+        btnContainer.style.marginTop = '20px';
+        btnContainer.style.display = 'flex';
+        btnContainer.style.gap = '10px';
+        
+        const confirmBtn = document.createElement('button');
+        confirmBtn.textContent = '✅ تأكيد الرفع';
+        confirmBtn.style.padding = '10px 20px';
+        confirmBtn.style.backgroundColor = '#28a745';
+        confirmBtn.style.color = 'white';
+        confirmBtn.style.border = 'none';
+        confirmBtn.style.borderRadius = '8px';
+        confirmBtn.style.cursor = 'pointer';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = '❌ إلغاء';
+        cancelBtn.style.padding = '10px 20px';
+        cancelBtn.style.backgroundColor = '#dc3545';
+        cancelBtn.style.color = 'white';
+        cancelBtn.style.border = 'none';
+        cancelBtn.style.borderRadius = '8px';
+        cancelBtn.style.cursor = 'pointer';
+        
+        btnContainer.appendChild(confirmBtn);
+        btnContainer.appendChild(cancelBtn);
+        previewDiv.appendChild(btnContainer);
+        
+        // شريط التقدم
+        const progressBar = document.createElement('div');
+        progressBar.style.width = '80%';
+        progressBar.style.height = '10px';
+        progressBar.style.backgroundColor = '#ddd';
+        progressBar.style.borderRadius = '5px';
+        progressBar.style.marginTop = '20px';
+        progressBar.style.display = 'none';
+        const progressFill = document.createElement('div');
+        progressFill.style.width = '0%';
+        progressFill.style.height = '100%';
+        progressFill.style.backgroundColor = '#28a745';
+        progressFill.style.borderRadius = '5px';
+        progressBar.appendChild(progressFill);
+        previewDiv.appendChild(progressBar);
+        
+        document.body.appendChild(previewDiv);
+        
+        // وظيفة الرفع
+        const uploadImage = async () => {
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
+            progressBar.style.display = 'block';
+            
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 10;
+                progressFill.style.width = progress + '%';
+                if(progress >= 100) clearInterval(interval);
+            }, 200);
+            
+            try {
+                const response = await fetch('/api/save-evidence',{
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({element_id:currentElementId,witness_id:currentWitnessId,image:imageData})
+                });
+                const result = await response.json();
+                if(result.success){
+                    alert('✅ تم التوثيق بنجاح!');
+                    previewDiv.remove();
+                    closeCamera();
+                    if(document.getElementById('statsSection').style.display==='block')loadStats();
+                    if(document.getElementById('historySection').style.display==='block')loadHistory();
+                } else {
+                    alert('❌ خطأ: '+result.error);
+                    previewDiv.remove();
+                }
+            } catch(err) {
+                alert('❌ خطأ في الرفع: '+err.message);
+                previewDiv.remove();
+            }
+        };
+        
+        confirmBtn.onclick = uploadImage;
+        cancelBtn.onclick = () => previewDiv.remove();
+        
     } else {
         alert('❌ لم يتم التقاط الصورة، تأكد من تشغيل الكاميرا');
     }
@@ -937,6 +1041,7 @@ async function loadHistory(){
                     <span>📅 ${formattedMiladi}</span>
                     <span>🕌 ${hijriDate}</span>
                     <span>📌 العنصر ${item.element_id} - الشاهد ${item.witness_id}</span>
+                    <button onclick="deleteEvidence('${item.id}')" style="background:#dc3545; color:white; border:none; border-radius:50%; width:24px; height:24px; cursor:pointer; font-size:14px;">✖</button>
                 </div>
                 <img src="${item.image_url}" style="width:100%; height:180px; object-fit:cover;" onerror="this.src='https://via.placeholder.com/300x180?text=صورة+غير+متوفرة'">
                 <div style="padding:10px;">
@@ -947,7 +1052,12 @@ async function loadHistory(){
         }).join('');
     }else{grid.innerHTML='<p style="text-align:center; padding:20px;">📭 لا توجد توثيقات سابقة</p>';}
 }
-async function logout(){await fetch('/api/logout',{method:'POST'});window.location.href='/';}
+async function logout(){
+    if(confirm('هل أنت متأكد من تسجيل الخروج؟')){
+        await fetch('/api/logout',{method:'POST'});
+        window.location.href='/';
+    }
+}
 document.getElementById('dateDisplay').innerText=new Date().toLocaleDateString('ar-SA');
 document.getElementById('usernameDisplay').innerText='{{ username }}';
 displayElements();
@@ -998,149 +1108,350 @@ th{background:#f8f9fa}
 .logout-btn{background:rgba(255,255,255,0.2);border:none;color:white;padding:10px;border-radius:8px;cursor:pointer;width:100%;margin-top:20px}
 .sync-status{background:#e9ecef;padding:10px;border-radius:8px;margin-bottom:20px;display:none}
 .modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center}
-.modal-content{background:white;border-radius:15px;padding:25px;width:90%;max-width:400px}
-.modal-content input{width:100%;padding:10px;margin:10px 0;border:1px solid #ddd;border-radius:8px}
+.modal-content{background:white;border-radius:15px;padding:25px;width:90%;max-width:500px}
+.modal-content input,.modal-content select{width:100%;padding:10px;margin:10px 0;border:1px solid #ddd;border-radius:8px}
 .modal-buttons{display:flex;gap:10px;margin-top:20px}
 .modal-buttons button{flex:1}
-@media(max-width:768px){.sidebar{width:220px}.main-content{margin-right:220px}}
+.search-box{width:100%;padding:10px;margin-bottom:15px;border:1px solid #ddd;border-radius:8px;font-size:14px}
+.filter-bar{display:flex;gap:10px;margin-bottom:15px;flex-wrap:wrap}
+.filter-bar select,.filter-bar input{padding:8px;border:1px solid #ddd;border-radius:8px}
+.pagination{display:flex;justify-content:center;gap:5px;margin-top:15px}
+.pagination button{padding:5px 10px;background:#667eea;color:white;border:none;border-radius:5px;cursor:pointer}
+.pagination button:hover{background:#5a67d8}
 </style>
 </head>
 <body>
-<div class="sidebar"><h3>👑 لوحة المدير</h3>
-<div class="nav-item active" onclick="showSection('all')">📋 جميع التوثيقات</div>
+<div class="sidebar"><h3>👑 لوحة المدير المتقدمة</h3>
+<div class="nav-item active" onclick="showSection('dashboard')">📊 لوحة التحكم</div>
+<div class="nav-item" onclick="showSection('evidences')">📋 إدارة التوثيقات</div>
 <div class="nav-item" onclick="showSection('users')">👥 إدارة المستخدمين</div>
 <div class="nav-item" onclick="showSection('sync')">🔄 المزامنة</div>
+<div class="nav-item" onclick="showSection('reports')">📈 التقارير والإحصائيات</div>
 <button class="logout-btn" onclick="logout()">🚪 خروج</button></div>
-<div class="main-content"><div class="header"><h2>لوحة تحكم المدير</h2><div id="dateDisplay"></div></div>
+<div class="main-content"><div class="header"><h2>لوحة تحكم المدير المتقدمة</h2><div id="dateDisplay"></div></div>
+
+<!-- Dashboard Section -->
+<div id="dashboardSection">
 <div class="stats"><div class="stat-card"><div class="stat-number" id="totalCount">0</div><div>إجمالي التوثيقات</div></div>
 <div class="stat-card"><div class="stat-number" id="usersCount">0</div><div>عدد المراقبين</div></div>
-<div class="stat-card"><div class="stat-number" id="todayCount">0</div><div>توثيقات اليوم</div></div></div>
-<div id="allSection"><div class="action-buttons"><button class="btn btn-primary" onclick="exportCSV()">📥 تصدير CSV</button><button class="btn btn-primary" onclick="refreshData()">🔄 تحديث</button></div>
-<div style="overflow-x:auto;"><table><thead><tr><th>#</th><th>المراقب</th><th>العنصر</th><th>الشاهد</th><th>الصورة</th><th>التاريخ</th></tr></thead><tbody id="tableBody"></tbody></table></div></div>
-<div id="usersSection" style="display:none;"><div class="sync-buttons"><button class="btn btn-success" onclick="showAddUserModal()">➕ إضافة مستخدم جديد</button><button class="btn btn-primary" onclick="loadUsers()">🔄 تحديث القائمة</button></div>
-<div style="overflow-x:auto;margin-top:20px;"><table><thead><tr><th>#</th><th>اسم المستخدم</th><th>الاسم الكامل</th><th>النوع</th><th>الإجراءات</th></tr></thead><tbody id="usersTableBody"></tbody></table></div></div>
-<div id="syncSection" style="display:none;"><div class="sync-status" id="syncStatus"></div><div class="sync-buttons"><button class="btn btn-primary" onclick="syncToCloud()">☁️ مزامنة إلى السحابة</button><button class="btn btn-success" onclick="syncFromCloud()">📥 جلب من السحابة</button></div>
-<div style="background:white;border-radius:15px;padding:20px;margin-top:20px;"><h4>ℹ️ حول المزامنة</h4><p>• "مزامنة إلى السحابة": رفع التوثيقات المحلية إلى Supabase</p><p>• "جلب من السحابة": تحميل التوثيقات من Supabase إلى الجهاز</p><p>• ملاحظة: يجب إعداد Supabase أولاً في متغيرات البيئة</p></div></div></div>
+<div class="stat-card"><div class="stat-number" id="todayCount">0</div><div>توثيقات اليوم</div></div>
+<div class="stat-card"><div class="stat-number" id="weekCount">0</div><div>آخر 7 أيام</div></div></div>
+<canvas id="activityChart" width="800" height="300" style="max-width:100%; background:white; border-radius:15px; padding:15px;"></canvas>
+</div>
+
+<!-- Evidences Section -->
+<div id="evidencesSection" style="display:none;">
+<div style="background:white; border-radius:15px; padding:20px;">
+<div class="filter-bar"><input type="text" id="searchInput" class="search-box" placeholder="🔍 بحث في التوثيقات..."><select id="filterUser"><option value="">جميع المراقبين</option></select><select id="filterElement"><option value="">جميع العناصر</option></select><input type="date" id="filterDate"></div>
+<div class="action-buttons"><button class="btn btn-primary" onclick="exportCSV()">📥 تصدير CSV</button><button class="btn btn-success" onclick="exportExcel()">📊 تصدير Excel</button><button class="btn btn-info" onclick="refreshData()">🔄 تحديث</button><button class="btn btn-danger" onclick="deleteSelected()">🗑️ حذف المحدد</button></div>
+<div style="overflow-x:auto;"><table id="dataTable"><thead><tr><th><input type="checkbox" id="selectAll"></th><th>#</th><th>المراقب</th><th>العنصر</th><th>الشاهد</th><th>الصورة</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody id="tableBody"></tbody></table></div>
+<div class="pagination" id="pagination"></div>
+</div></div>
+
+<!-- Users Section -->
+<div id="usersSection" style="display:none;">
+<div class="action-buttons"><button class="btn btn-success" onclick="showAddUserModal()">➕ إضافة مستخدم جديد</button><button class="btn btn-primary" onclick="loadUsers()">🔄 تحديث القائمة</button></div>
+<div style="overflow-x:auto;margin-top:20px;"><table><thead><tr><th>#</th><th>اسم المستخدم</th><th>الاسم الكامل</th><th>النوع</th><th>عدد التوثيقات</th><th>آخر نشاط</th><th>الإجراءات</th></tr></thead><tbody id="usersTableBody"></tbody></table></div>
+</div>
+
+<!-- Sync Section -->
+<div id="syncSection" style="display:none;">
+<div class="sync-status" id="syncStatus"></div>
+<div class="sync-buttons"><button class="btn btn-primary" onclick="syncToCloud()">☁️ مزامنة إلى السحابة</button><button class="btn btn-success" onclick="syncFromCloud()">📥 جلب من السحابة</button></div>
+<div style="background:white;border-radius:15px;padding:20px;margin-top:20px;">
+<h4>ℹ️ معلومات المزامنة</h4><p><span id="syncInfo">جاري التحميل...</span></p>
+<hr><h4>📊 سجل المزامنة</h4><div id="syncLog" style="max-height:200px; overflow-y:auto; font-size:12px;"></div>
+</div></div>
+
+<!-- Reports Section -->
+<div id="reportsSection" style="display:none;">
+<div style="background:white;border-radius:15px;padding:20px;">
+<h3>تقرير أداء المراقبين</h3>
+<canvas id="userChart" width="800" height="300" style="max-width:100%;"></canvas>
+<div id="rankings" style="margin-top:20px;"></div>
+<button class="btn btn-success" onclick="exportReport()" style="margin-top:15px;">📊 تصدير تقرير PDF</button>
+</div></div>
+
+<!-- Modals -->
 <div id="addUserModal" class="modal"><div class="modal-content"><h3>➕ إضافة مستخدم جديد</h3><input type="text" id="newUsername" placeholder="اسم المستخدم" required><input type="text" id="newFullName" placeholder="الاسم الكامل"><input type="password" id="newPassword" placeholder="كلمة السر" value="pass123"><div class="modal-buttons"><button class="btn btn-success" onclick="addUser()">إضافة</button><button class="btn btn-danger" onclick="closeAddUserModal()">إلغاء</button></div></div></div>
-<div id="editUserModal" class="modal"><div class="modal-content"><h3>✏️ تعديل مستخدم</h3><input type="hidden" id="editUserId"><input type="text" id="editFullName" placeholder="الاسم الكامل"><input type="password" id="editPassword" placeholder="كلمة سر جديدة (اتركها فارغة إذا لا تريد تغييرها)"><div class="modal-buttons"><button class="btn btn-primary" onclick="updateUser()">حفظ التغييرات</button><button class="btn btn-danger" onclick="closeEditUserModal()">إلغاء</button></div></div></div>
+<div id="editUserModal" class="modal"><div class="modal-content"><h3>✏️ تعديل مستخدم</h3><input type="hidden" id="editUserId"><input type="text" id="editFullName" placeholder="الاسم الكامل"><input type="password" id="editPassword" placeholder="كلمة سر جديدة"><div class="modal-buttons"><button class="btn btn-primary" onclick="updateUser()">حفظ</button><button class="btn btn-danger" onclick="closeEditUserModal()">إلغاء</button></div></div></div>
+<div id="viewImageModal" class="modal"><div class="modal-content" style="max-width:700px;"><img id="modalImage" style="width:100%; border-radius:10px;"><div class="modal-buttons"><button class="btn btn-danger" onclick="closeImageModal()">إغلاق</button></div></div></div>
+
 <script>
-let allData=[];
+let allData=[], filteredData=[], currentPage=1, rowsPerPage=20, activityChart=null, userChart=null;
+let syncLogs = [];
+
+function logSync(message){
+    syncLogs.unshift(`[${new Date().toLocaleString()}] ${message}`);
+    if(syncLogs.length>20) syncLogs.pop();
+    document.getElementById('syncLog').innerHTML = syncLogs.map(l=>`<div>${l}</div>`).join('');
+}
+
 async function refreshData(){
     const response=await fetch('/api/admin/all-evidences');
     const data=await response.json();
     if(data.success){
         allData=data.data;
-        document.getElementById('totalCount').innerText=allData.length;
-        const users=[...new Set(allData.map(e=>e.username))];
-        document.getElementById('usersCount').innerText=users.length;
-        const today=allData.filter(e=>new Date(e.created_at).toDateString()===new Date().toDateString()).length;
-        document.getElementById('todayCount').innerText=today;
-        const tbody=document.getElementById('tableBody');
-        if(allData.length===0){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;">لا توجد توثيقات بعد</td></tr>';}
-        else{tbody.innerHTML=allData.map((item,i)=>`<tr><td>${i+1}</td><td>${item.username}</td><td>العنصر ${item.element_id}</td><td>${item.witness_text.substring(0,40)}...</td><td><img src="/${item.image_path}" class="evidence-img" onerror="this.src='https://via.placeholder.com/50?text=لا+صورة'" onclick="window.open('/${item.image_path}')"></td><td>${new Date(item.created_at).toLocaleDateString('ar-SA')}</td></tr>`).join('');}
+        applyFilters();
+        updateStats();
+        updateFilters();
+        drawActivityChart();
     }
 }
+
+function applyFilters(){
+    filteredData=[...allData];
+    const searchTerm=document.getElementById('searchInput').value.toLowerCase();
+    const filterUser=document.getElementById('filterUser').value;
+    const filterElement=document.getElementById('filterElement').value;
+    const filterDate=document.getElementById('filterDate').value;
+    if(searchTerm) filteredData=filteredData.filter(e=>e.witness_text?.toLowerCase().includes(searchTerm)||e.username?.toLowerCase().includes(searchTerm));
+    if(filterUser) filteredData=filteredData.filter(e=>e.username===filterUser);
+    if(filterElement) filteredData=filteredData.filter(e=>e.element_id===filterElement);
+    if(filterDate) filteredData=filteredData.filter(e=>e.created_at?.startsWith(filterDate));
+    renderTable();
+}
+
+function renderTable(){
+    const start=(currentPage-1)*rowsPerPage;
+    const paginated=filteredData.slice(start,start+rowsPerPage);
+    const tbody=document.getElementById('tableBody');
+    if(paginated.length===0){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;">لا توجد توثيقات</td></tr>';document.getElementById('pagination').innerHTML='';return;}
+    tbody.innerHTML=paginated.map((item,i)=>`<tr><td><input type="checkbox" class="selectItem" value="${item.id}"></td><td>${start+i+1}</td><td>${item.username}</td><td>${item.element_id}</td><td style="max-width:300px;">${item.witness_text?.substring(0,50)}...</td><td>${item.image_url?`<img src="${item.image_url}" class="evidence-img" onclick="showImage('${item.image_url}')">`:'لا توجد'}</td><td>${item.created_at?.substring(0,10)}</td><td><button class="btn btn-danger" style="padding:5px 10px;" onclick="deleteEvidence('${item.id}')">🗑️</button></td></tr>`).join('');
+    const totalPages=Math.ceil(filteredData.length/rowsPerPage);
+    let paginationHtml='';
+    for(let i=1;i<=totalPages;i++) paginationHtml+=`<button onclick="goToPage(${i})" style="${i===currentPage?'background:#5a67d8':''}">${i}</button>`;
+    document.getElementById('pagination').innerHTML=paginationHtml;
+    document.getElementById('selectAll').onclick=function(e){document.querySelectorAll('.selectItem').forEach(cb=>cb.checked=e.target.checked);};
+}
+
+function goToPage(page){currentPage=page;renderTable();}
+function updateStats(){
+    const users=[...new Set(allData.map(e=>e.username))];
+    const today=new Date().toISOString().split('T')[0];
+    const weekAgo=new Date();weekAgo.setDate(weekAgo.getDate()-7);
+    document.getElementById('totalCount').innerText=allData.length;
+    document.getElementById('usersCount').innerText=users.length;
+    document.getElementById('todayCount').innerText=allData.filter(e=>e.created_at?.startsWith(today)).length;
+    document.getElementById('weekCount').innerText=allData.filter(e=>new Date(e.created_at)>weekAgo).length;
+}
+function updateFilters(){
+    const users=[...new Set(allData.map(e=>e.username))];
+    const userSelect=document.getElementById('filterUser');
+    userSelect.innerHTML='<option value="">جميع المراقبين</option>'+users.map(u=>`<option value="${u}">${u}</option>`).join('');
+    const elements=[...new Set(allData.map(e=>e.element_id))];
+    const elementSelect=document.getElementById('filterElement');
+    elementSelect.innerHTML='<option value="">جميع العناصر</option>'+elements.map(el=>`<option value="${el}">العنصر ${el}</option>`).join('');
+}
+async function deleteEvidence(id){if(confirm('حذف هذا التوثيق؟')){const response=await fetch('/api/delete-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});const result=await response.json();if(result.success){alert('تم الحذف');refreshData();loadUsers();}else alert('خطأ: '+result.error);}}
+function deleteSelected(){const selected=[...document.querySelectorAll('.selectItem:checked')].map(cb=>cb.value);if(selected.length===0){alert('اختر عناصر للحذف');return;}if(confirm(`حذف ${selected.length} عنصر؟`)){Promise.all(selected.map(id=>fetch('/api/delete-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}))).then(()=>{alert('تم الحذف');refreshData();loadUsers();});}}
 async function loadUsers(){
     const response=await fetch('/api/admin/users');
     const data=await response.json();
     if(data.success){
+        const userStats={};
+        allData.forEach(e=>{userStats[e.username]=(userStats[e.username]||0)+1;});
+        const lastActivity={};
+        allData.forEach(e=>{if(!lastActivity[e.username]||e.created_at>lastActivity[e.username])lastActivity[e.username]=e.created_at;});
         const tbody=document.getElementById('usersTableBody');
-        tbody.innerHTML=data.data.map((user,i)=>`<tr><td>${i+1}</td><td>${user.username}</td><td>${user.full_name||'-'}</td><td>${user.type==='admin'?'مدير':'مراقب'}</td><td>${user.username!=='admin'?`<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name||''}')" style="margin-left:5px;">✏️ تعديل</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️ حذف</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑 إعادة تعيين</button>`:'<span style="color:#999;">لا يمكن تعديل المدير</span>'}</td></tr>`).join('');
+        tbody.innerHTML=data.data.map((user,i)=>`<tr>
+            <td>${i+1}</td>
+            <td>${user.username}</td>
+            <td>${user.full_name||'-'}</td>
+            <td>${user.username==='admin'?'مدير':'مراقب'}</td>
+            <td>${userStats[user.username]||0}</td>
+            <td>${lastActivity[user.username]?.substring(0,10)||'-'}</td>
+            <td>${user.username!=='admin'?`<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name||''}')" style="margin-left:5px;">✏️</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑</button>`:'لا يمكن تعديل'}</td>
+        </tr>`).join('');
+        drawUserChart(userStats);
+        updateRankings(userStats);
     }
 }
-function showAddUserModal(){document.getElementById('addUserModal').style.display='flex';}
-function closeAddUserModal(){document.getElementById('addUserModal').style.display='none';document.getElementById('newUsername').value='';document.getElementById('newFullName').value='';document.getElementById('newPassword').value='pass123';}
-async function addUser(){
-    const username=document.getElementById('newUsername').value;
-    const full_name=document.getElementById('newFullName').value;
-    const password=document.getElementById('newPassword').value;
-    if(!username){alert('يرجى إدخال اسم المستخدم');return;}
-    const response=await fetch('/api/admin/add-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,full_name})});
-    const result=await response.json();
-    if(result.success){alert('✅ '+result.message);closeAddUserModal();loadUsers();refreshData();}
-    else{alert('❌ '+result.error);}
+function}
+function drawActivityChart(){
+    const last7 drawActivityChart(){
+    const last7DaysDays=[];
+    for(let=[];
+    for(let i= i=6;i>=06;i>=0;i--;i--){const d=new){const d=new Date(); Date();d.setd.setDate(dDate(d.getDate()-i.getDate()-i);last7Days);last.push(d7Days.push(d.toISO.toISOString().split('String().split('TT')[0]);}
+    const counts')[0]);}
+    const counts==last7Days.maplast7Days.map((day=>day=>allData.filter(e=>eallData.filter(e=>e.created_at?.startsWith(day)).length);
+.created_at?.startsWith(day)).length);
+    if    if(activityChart)(activityactivityChart.destroyChart)activityChart.destroy();
+    const ctx();
+    const ctx=document=document.getElementById('activityChart.getElementById('activityChart').get').getContext('Context('2d2d');
+   ');
+    activityChart=new Chart activityChart=new Chart(ctx,{type:'line(ctx,{type:'line',data:{labels',data:{labels:last:last7Days.map(d7Days=>d.map(d=>d.substring(.substring(5)),datasets5)),datasets:[{:[{label:'label:'عدد التوثعدد التوثيقاتيقات',data',data:count:counts,bs,borderColor:'#667eeorderColor:'#667eea',a',backgroundColor:'backgroundColor:'rgbargba(102(102,126,234,126,234,0,0.1.1)',fill)',fill:true:true,tension,tension:0.3:0.3}]},}]},options:{options:{responsive:true,responsive:true,maintainAspectmaintainAspectRatio:Ratio:true}}true}});
 }
-let currentEditId=null,currentEditUsername=null;
-function showEditUserModal(id,username,full_name){
-    currentEditId=id;currentEditUsername=username;
-    document.getElementById('editUserId').value=id;
-    document.getElementById('editFullName').value=full_name||'';
-    document.getElementById('editPassword').value='';
-    document.getElementById('editUserModal').style.display='flex';
+function draw);
 }
-function closeEditUserModal(){document.getElementById('editUserModal').style.display='none';currentEditId=null;currentEditUsername=null;}
-async function updateUser(){
-    const full_name=document.getElementById('editFullName').value;
-    const password=document.getElementById('editPassword').value;
-    const body={id:currentEditId};
-    if(full_name)body.full_name=full_name;
-    if(password)body.password=password;
-    const response=await fetch('/api/admin/update-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const result=await response.json();
-    if(result.success){alert('✅ '+result.message);closeEditUserModal();loadUsers();refreshData();}
-    else{alert('❌ '+result.error);}
+function drawUserChartUserChart(userStats(userStats){
+    const sorted=){
+    const sorted=Object.Object.entries(userStats).entries(userStats).sort((a,bsort((a,b)=>b)=>b[1[1]-a[1]-a[1]).slice]).slice(0(0,10,10);
+   );
+    if(user if(userChart)userChartChart)userChart.destroy.destroy();
+    const ctx=document();
+    const ctx=document.getElementById('userChart').getContext('.getElementById('userChart').getContext('2d');
+   2d');
+    userChart userChart=new Chart=new Chart(ctx,{type(ctx,{type:'bar:'bar',data:{labels',data:{labels:sorted:sorted.map(s.map(s=>s[0=>s[0]),dat]),datasets:[{labelasets:[{label:'عدد التوثيقات',data:sorted.map(s:'عدد التوثيقات',data:sorted.map(s=>s[1]),backgroundColor=>s[1]),backgroundColor:'#667eea',:'#667eeborderRadiusa',:8borderRadius:8}]},}]},options:{responsive:true,maintainoptions:{responsive:true,maintainAspectRatio:Aspecttrue}});
 }
-async function deleteUser(id,username){
-    if(confirm(`هل أنت متأكد من حذف المستخدم "${username}"؟ سيتم حذف جميع توثيقاته أيضاً.`)){
-        const response=await fetch('/api/admin/delete-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,username})});
-        const result=await response.json();
-        if(result.success){alert('✅ '+result.message);loadUsers();refreshData();}
-        else{alert('❌ '+result.error);}
-    }
+Ratio:true}});
 }
-async function resetPassword(id){
-    const newPassword=prompt('أدخل كلمة السر الجديدة (اتركها فارغة لاستخدام الافتراضي pass123)');
-    if(newPassword===null)return;
-    const response=await fetch('/api/admin/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,new_password:newPassword||'pass123'})});
-    const result=await response.json();
-    if(result.success){alert('✅ '+result.message);}
-    else{alert('❌ '+result.error);}
+function updateRankingsfunction updateRankings(userStats(userStats){
+   ){
+    const sorted const sorted=Object=Object.entries.entries(userStats(userStats).sort).sort((a((a,b)=>,b)=>bb[1]-[1]-a[1]);
+a[1]);
+    const medals    const medals=['=['🥇','🥇','🥈','🥉'];
+    document🥈','🥉'];
+    document.getElementById('rankings.getElementById('rankings').inner').innerHTML=`HTML=`<h<h4>4>🏆🏆 ترتي ترتيب المرب المراقباقبين</h4ين</h4>`>`+sorted.map(([user,count+sorted.map(([user,count],i)=>`<p>],i)=>`<p>${med${medals[i]||`${i+1}.`}als[i]||`${i+1}.`} <strong>${user}</strong <strong>${user}</strong>: ${>: ${count}count} توث توثيق</p>`يق</).joinp>`).join('');
 }
-async function syncToCloud(){
-    const status=document.getElementById('syncStatus');
-    status.style.display='block';status.innerHTML='⏳ جاري المزامنة إلى السحابة...';
-    const response=await fetch('/api/sync-to-cloud',{method:'POST'});
-    const result=await response.json();
-    if(result.success){status.innerHTML=`✅ تم المزامنة بنجاح! ${result.synced} توثيق.`;refreshData();}
-    else{status.innerHTML=`❌ خطأ: ${result.error||'فشل المزامنة'}`;}
-    setTimeout(()=>status.style.display='none',3000);
+('');
 }
-async function syncFromCloud(){
-    const status=document.getElementById('syncStatus');
-    status.style.display='block';status.innerHTML='⏳ جاري الجلب من السحابة...';
-    const response=await fetch('/api/sync-from-cloud',{method:'POST'});
-    const result=await response.json();
-    if(result.success){status.innerHTML=`✅ تم الجلب بنجاح! ${result.synced} توثيق.`;refreshData();loadUsers();}
-    else{status.innerHTML=`❌ خطأ: ${result.error||'فشل الجلب'}`;}
-    setTimeout(()=>status.style.display='none',3000);
+async functionasync function syncToCloud(){
+ syncToCloud(){
+    const    const status= status=document.getElementByIddocument.getElementById('sync('syncStatus');
+Status');
+    status    status.style.display='block.style.display='block';status';status.innerHTML='.innerHTML='⏳ ج⏳ جاري المزامنةاري المزامنة...';
+    const response=...';
+    const response=await fetchawait fetch('/api('/api/sync/sync-to-cloud-to-cloud',{',{method:'method:'POST'});
+    const resultPOST'});
+    const result=await response.json=await response.json();
+    if(result.success){();
+    if(result.success){status.innerHTML=`✅ تمت المزامنة!status.innerHTML=`✅ تمت المزامنة! ${result ${result.syn.synced}ced} عنصر عنصر.`.`;logSync(`;logSync(`✅ م✅ مزامنةزامنة إلى الس إلى السحابةحابة: ${result.s: ${result.syncedynced} عن} عنصر`صر`);});}else{status.innerHTML=`else{status.innerHTML=`❌ خط❌ خطأ:أ: ${result.error}` ${result.error}`;log;logSync(`Sync(`❌❌ فش فشل المل المزامنةزامنة: ${: ${result.errorresult.error}`);}`);}
+   }
+    setTimeout(() setTimeout(()=>status=>status.style.display.style.display='none',3000);
+='none',3000);
+    refresh    refreshData();
+Data();
 }
-function exportCSV(){
-    let csv="المراقب,رقم العنصر,رقم الشاهد,نص الشاهد,التاريخ\n";
-    allData.forEach(e=>{csv+=`"${e.username}","${e.element_id}","${e.witness_id}","${e.witness_text}","${e.created_at}"\n`;});
-    const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-    const link=document.createElement('a');link.href=URL.createObjectURL(blob);
-    link.download=`evidences_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+async}
+async function sync function syncFromCloud(){
+   FromCloud(){
+    const status const status=document=document.getElementById('.getElementById('syncStatus');
+   syncStatus');
+    status.style.display=' status.style.display='block';block';status.innerHTML='status.innerHTML='⏳ جاري⏳ جاري الجلب...';
+    const الجلب...';
+    const response=await fetch('/api/sync-from-cloud',{method:'POST' response=await fetch('/api/sync-from-cloud',{method:'POST'});
+   });
+    const result=await const result=await response.json response.json();
+    if();
+    if(result(result.success){.success){status.innerHTML=`✅ تم الجstatus.innerHTML=`✅ تم الجلب!لب! ${result.syn ${result.synced}ced} عنصر عنصر.`;log.`;logSync(`Sync(`✅ جلب من السح✅ جلب من السحابة:ابة: ${result ${result.syn.synced} عنصر`);ced}}else عنصر`);}else{status.innerHTML=`{status.innerHTML=`❌❌ خطأ خطأ: ${: ${result.error}`;result.error}`;logSync(`❌ فlogSync(`❌ فشلشل الجلب الجلب: ${: ${result.errorresult.error}`);}`);}
+   }
+    setTimeout(()=>status setTimeout(().style.display=>status='none.style.display='none',300',3000);
+0);
+    refresh    refreshData();
+Data();
 }
+function}
+function exportCS exportCSV(){
+V(){
+    let csv="    let csv="المرالمراقباقب,رقم العن,رقم العنصر,صر,رقمرقم الشاهد الشاهد,نص الشاهد,,نص الشاهد,التاريخالتاريخ,ر,رابط الصابط الصورة\n";
+    filteredData.forEach(eورة\n";
+    filteredData.forEach(e=>{csv+==>{csv+=`"`"${e${e.username}.username}","${","${e.elemente.element_id}_id}","${","${e.we.witness_iditness_id}","}","${e${e.witness_text}","${e.created.witness_text}","${e.created_at}","${_at}","${e.image_url}"\ne.image_url}"\n`;`;});
+   });
+    const blob const blob=new Blob([csv],=new Blob([csv],{type{type:'text:'text/csv/csv;chars;charset=utfet=utf-8;'-8;'});
+   });
+    const link=document const link=document.createElement('.createElement('a');a');link.hlink.href=ref=URL.createURL.createObjectURL(blObjectURL(blob);ob);link.dlink.download=`ownload=`evidencesevidences_${new Date_${new Date().toISOString().toISOString().split().split('T('T')[0')[0]}.]}.csv`;linkcsv`;link.click();
+.click();
+}
+function exportExcel(){
+   }
+function exportExcel(){
+    let html=` let html=`<html><head><meta charset="<html><head><meta charset="UTF-UTF-88"><title>"><title>التوثالتوثيقاتيقات</title></head</title><body></head><body><table><table border=" border="1"><tr1"><tr><th>><th>المرالمراقب</thاقب</th><th><th>الع>العنصر</thنصر</th><th>الش><th>الشاهد</اهد</thth><th>التاريخ</th><th>التاريخ</th></tr></tr>`;
+    filtered>`;
+    filteredData.forEachData.forEach(e=>(e=>{html+=`<tr><td>${{html+=`<tr><td>${e.usernamee.username}</td}</td><td>${e.element><td>${e.element_id}</_id}</tdtd><td>><td>${e${e.witness.witness_text}</_text}</tdtd><td>><td>${e${e.created_at}</td.created_at}</td></tr></tr>`;});
+   >`;});
+    html+= html+=`</`</table></table></body></body></html>html>`;
+   `;
+    const blob const blob=new Bl=new Blobob([html],([html],{type{type:'application/vnd:'application/vnd.ms-excel'});
+    const link.ms-excel'});
+    const link=document.createElement('=document.createElement('a');a');link.href=URL.createObjectURLlink.href=URL.create(blob);link.download=`evidences_${ObjectURL(blob);link.download=`evidences_${new Datenew Date().toISOString().toISOString().split().split('T')[0]}.('T')[0]}.xlsxls`;link.click();
+}
+`;link.click();
+}
+function exportfunction exportReport(){
+    const reportReport(){
+    const reportWindow=window.open('','_blank');
+Window=window.open('','_blank');
+    report    reportWindow.document.writeWindow.d(`ocument.write(`<html<html><head><meta><head><meta charset="UTF-8"><title>تقرير التوثيق charset="UTF-8"><title>تقرير التوثيقات</ات</title><style>body{title><style>body{font-familyfont-family:A:Arial;}rial;} table{border-collapse table{border-collapse::collapse;collapse;width:width:100%} th100%} th,td,td{border:1{border:1px solidpx solid #ddd #ddd;padding;padding:8:8px;text-alignpx;text-align:right:right}</style}</style></head></head><body><h><body><h1>1>تقرير التوثيقتقرير التوثيقات</h1><pات</h1><p>التاريخ: ${new Date().>التاريخ: ${new Date().toLocaleDateString('ar-SAtoLocaleDateString('ar-SA')}</p')}</p><p>><p>إجماليإجمالي التوث التوثيقاتيقات: ${allData: ${allData.length}</.length}</p><p>عدد المرp><p>عدد المراقباقبين: ${[...ين: ${[...new Setnew Set(allData.map(e(allData.map(e=>e.username))=>e.username))].length}</p].length}</p><table><table><tr><th><tr><th>المراقب</th>المراقب</th><th>><th>العنالعنصر</th><th>صر</th><th>الشاهد</thالشاهد</th><th><th>التاريخ</th></>التاريخ</th></tr>`tr>`);
+    filteredData);
+    filteredData.forEach(e.forEach(e=>{=>{reportWindow.document.write(`<tr><td>${reportWindow.document.write(`<tr><td>${e.username}</td><tde.username}</td><td>${>${e.element_id}</e.element_id}</tdtd><td>${e><td>${e.witness_text}</td><td>.witness_text}</td><td>${e.created_at}</td${e.created_at}</td></tr></tr>`);>`);});
+   });
+    reportWindow reportWindow.document.write(`</table.document.write(`</table></body></html>`);
+    report></body></html>`);
+    reportWindow.dWindow.document.close();reportWindowocument.close();reportWindow.print();
+}
+function.print();
+}
+function showImage showImage(url){(url){document.getElementByIddocument.getElementById('modal('modalImage').Image').src=url;src=url;document.getElementByIddocument.getElementById('view('viewImageModalImageModal').style').style.display='.display='flex';flex';}
+function}
+function closeImage closeImageModal(){Modal(){document.getElementById('viewdocument.getElementById('viewImageModalImageModal').style').style.display='.display='none';none';}
+//}
+// دو دوال المستال المستخدمينخدمين (ن (نفس النسفس النسخة السابقة)
+خة السابقة)
+function showfunction showAddUserAddUserModal(){document.getElementById('addModal(){document.getElementById('addUserModalUserModal').style').style.display='.display='flex';flex';}
+function}
+function closeAddUserModal closeAddUserModal(){document(){document.getElementById('.getElementById('addUserModal').style.display='none';document.getElementById('newUsername').value='';document.getElementById('newFullName').value='';addUserModal').style.display='none';document.getElementById('newUsername').value='';document.getElementById('newFullName').value='';document.getElementByIddocument.getElementById('newPassword').value='('newPassword').value='pass123pass123';}
+';}
+async function addUser(){const username=async function addUser(){const username=document.getElementByIddocument.getElementById('newUsername').value;('newUsername').value;const full_name=const full_name=document.getElementByIddocument.getElementById('new('newFullName').valueFullName').value;const;const password=document.getElementById('newPassword').value;if(!username){alert('يرجى إدخ password=document.getElementById('newPassword').value;if(!username){alert('يرجى إدخال اسمال اسم المستخدم');return المستخدم');return;}const response=await fetch;}const response=await fetch('/api('/api/admin/add-user',/admin/add-user',{method{method:'POST',headers:'POST',headers:{':{'Content-TypeContent-Type':'application/json'':'application/json'},body},body:JSON.stringify({:JSON.stringify({username,password,username,password,full_name})});full_name})});const resultconst result=await response.json();if(result.success=await response.json();if(result.success){alert('✅ '+result.message);){alert('✅ '+result.message);closeAddUserModal();loadUsers();closeAddUserModal();load}Users();}else{alelse{alert('❌ '+result.error);ert('❌ '+result.error);}}
+let currentEdit}}
+let currentEditId=null,currentEditUsername=Id=null,currentEditUsername=null;
+null;
+function showfunction showEditUserEditUserModal(id,username,full_name){currentEditModal(id,username,full_name){currentEditId=Id=id;id;currentEditcurrentEditUsername=username;Username=username;document.getElementByIddocument.getElementById('editUserId').value=id;document.getElementById('edit('editUserId').value=id;document.getElementById('editFullNameFullName').value').value=full=full_name||_name||'';'';document.getElementByIddocument.getElementById('edit('editPassword').value='';document.getElementById('editUserModalPassword').value='';document.getElementById('editUserModal').style.display='flex';}
+').style.display='flex';}
+function closeEditUserModal(){document.getElementById('editUserModal').style.display='none';function closeEditUserModal(){document.getElementById('editUserModal').style.display='none';currentEditId=null;currentEditId=null;currentEditUsername=null;}
+currentEditUsername=null;}
+async function updateUser(){const full_name=document.getElementById('async function updateUser(){const full_name=document.getElementById('editFullName').value;const password=documenteditFullName').value;const password=document.getElementById('editPassword.getElementById('editPassword').value;const').value;const body={ body={id:currentEditid:currentEditId};Id};if(full_nameif(full_name)body)body.full_name=full_name;.full_name=full_name;if(passwordif(password)body.password=)bodypassword;const response.password=password;const response=await=await fetch('/api/admin fetch('/api/admin/update-user',/update-user',{method:'POST',headers:{'{method:'POST',headers:{'Content-TypeContent-Type':'application/json'':'application/json'},body:JSON},body:JSON.stringify(body.stringify(body)});)});const result=awaitconst result=await response.json response.json();if();if(result.success(result.success){alert){alert('✅('✅ '+result '+result.message);closeEdit.message);closeEditUserModalUserModal();loadUsers();();loadUsers();}else{alert}else{alert('❌ '+('❌ '+result.errorresult.error);}}
+);}}
+async function deleteUserasync function deleteUser(id,(id,username){if(username){confirm(`if(confirm(`حذحذف المستخدم "${ف المستخدم "${username}"username}"؟`؟`)){)){const responseconst response=await=await fetch('/ fetch('/api/adminapi/admin/delete/delete-user',-user',{method{method:'POST:'POST',headers',headers:{':{'Content-TypeContent-Type':'application':'application/json'/json'},body},body:JSON:JSON.stringify({.stringify({id,id,username})username})});const});const result= result=await responseawait response.json();if(result.success){.json();if(result.success){alert('✅ '+result.messagealert('✅ '+);loadresult.message);loadUsers();refreshData();}else{alUsers();refreshData();}else{alert('❌ert('❌ '+result.error);}}}
+async function '+result.error);}}}
+async function resetPassword(id){ resetPassword(id){const newPassword=prompt('كلمة السرconst newPassword=prompt('كلمة السر الجديدة ( الجديدة (اتاتركهاركها فارغة لل فارغة للافافترتراضي passاضي pass123)123)');if(newPassword');if(newPassword===null===null)return)return;const response;const=await fetch response=await fetch('/api('/api/admin/res/admin/reset-pet-password',assword',{method:'POST{method',headers:'POST',headers:{':{'Content-Type':'applicationContent-Type':'application/json'},body:JSON.stringify({id,/json'},body:JSON.stringify({id,new_passwordnew_password:new:newPassword||Password||'pass123'})});'pass123'})});const resultconst result=await response=await response.json.json();if();if(result.success){alert(result.success){alert('✅('✅ '+result.message); '+result.message);}else}else{alert{alert('❌ '+('❌ '+result.errorresult.error);}}
+function showSection(s);}}
 function showSection(section){
-    document.getElementById('allSection').style.display=section==='all'?'block':'none';
-    document.getElementById('usersSection').style.display=section==='users'?'block':'none';
-    document.getElementById('syncSection').style.display=section==='sync'?'block':'none';
-    const navItems = document.querySelectorAll('.nav-item');
-    navItems.forEach((item)=>{
-        item.classList.remove('active');
-        if(item.getAttribute('onclick') === `showSection('${section}')`){
-            item.classList.add('active');
-        }
-    });
-    if(section==='users')loadUsers();
+ection){
+    document    document.getElementById('dashboardSection').style.display=.getElementById('dashboardSection').style.display=section==section==='dashboard='dashboard'?''?'block':'block':'none';
+none';
+    document.getElementById('evidences    document.getElementById('evidencesSection').style.displaySection').style.display=section==='evidences=section==='evidences'?''?'block':'none';
+    document.getElementById('block':'none';
+    document.getElementById('usersSectionusersSection').style').style.display=.display=section==='userssection=='?'='users'?'block':'block':'none';
+    documentnone';
+    document.getElementById('.getElementById('syncSectionsyncSection').style').style.display=.display=section==section==='sync'?'='sync'?'block':'block':'none';
+none';
+    document.getElementById('reports    document.getElementById('reportsSection').Section').style.display=sectionstyle.display=section==='reports==='reports'?'block':''?'block':'none';
+    documentnone';
+    document.querySelectorAll.querySelectorAll('.nav-item').('.nav-item').forEach(itemforEach(item=>item=>item.classList.remove('active'));
+   .classList.remove('active'));
+    event.target.classList.add event.target.classList.add('active('active');
+    if(s');
+    if(section==ection==='users')loadUsers();
+='users')loadUsers();
 }
-async function logout(){await fetch('/api/logout',{method:'POST'});window.location.href='/';}
-document.getElementById('dateDisplay').innerText=new Date().toLocaleDateString('ar-SA');
-refreshData();
+}
+async functionasync function logout(){ logout(){await fetchawait fetch('/api('/api/logout',{/logout',{method:'method:'POST'}POST'});window);window.location.h.location.href='/ref='/';}
+document.getElementById';}
+document.getElementById('date('dateDisplay').innerTextDisplay').innerText=new Date=new Date().toLocaleDateString('ar-SA().toLocaleDateString('ar-SA');
+document');
+document.getElementById('.getElementById('searchInputsearchInput').add').addEventListener('input',()=>EventListener('input',{current()=>{currentPage=Page=1;1;applyFiltersapplyFilters();});
+();});
+documentdocument.getElementById('.getElementById('filterUserfilterUser').add').addEventListener('change',EventListener('change',()=>()=>{currentPage=1;{currentPage=1;applyFiltersapplyFilters();});
+();});
+document.getElementById('filterdocument.getElementById('filterElement').addEventListenerElement').addEventListener('change('change',()',()=>{currentPage=>{currentPage=1=1;applyFilters();});
+document.getElementById('filterDate;applyFilters();});
+document.getElementById('filterDate').add').addEventListener('EventListener('change',change',()=>()=>{current{currentPage=Page=1;1;applyFiltersapplyFilters();});
+();});
+refreshDatarefreshData();
+//();
+// تح تحميلميل Chart.js Chart.js
+const
+const script= script=document.createElement('script');document.createElement('script');script.srcscript.src='https://cdn='https://cdn.jsdel.jsdelivr.net/nivr.net/npm/chpm/chart.jsart.js';
+document.head.appendChild';
+document.head.appendChild(script(script);
+</script>
+</body);
 </script>
 </body>
+</>
 </html>
+html>
 '''
 
 # ============ Routes API ============
@@ -1159,6 +1470,43 @@ def admin_panel():
     if 'username' not in session or session.get('username') != 'admin':
         return redirect(url_for('index'))
     return render_template_string(ADMIN_PAGE)
+
+@app.route('/api/delete-evidence', methods=['POST'])
+def delete_evidence():
+    if 'username' not in session:
+        return jsonify({'success': False, 'error': 'غير مسجل دخول'})
+    
+    data = request.json
+    evidence_id = data.get('id')
+    
+    if not evidence_id:
+        return jsonify({'success': False, 'error': 'معرف غير صالح'})
+    
+    try:
+        # حذف من Supabase
+        if SUPABASE_URL and SUPABASE_KEY:
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}'
+            }
+            # حذف من جدول evidences
+            response = requests.delete(
+                f"{SUPABASE_URL}/rest/v1/evidences?id=eq.{evidence_id}",
+                headers=headers
+            )
+            if response.status_code not in [200, 204]:
+                return jsonify({'success': False, 'error': 'فشل حذف البيانات من Supabase'})
+        
+        # حذف من قاعدة البيانات المحلية
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DELETE FROM evidences WHERE id = ? AND username = ?", (evidence_id, session['username']))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'تم الحذف بنجاح'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/login', methods=['POST'])
 def login():
