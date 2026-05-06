@@ -545,7 +545,7 @@ button:hover{transform:translateY(-2px);box-shadow:0 5px 15px rgba(0,0,0,0.2)}
 <body>
 <div class="login-container"><div class="logo">📸</div><h1>نظام توثيق الشواهد</h1>
 <form id="loginForm"><input type="text" id="username" placeholder="اسم المستخدم" required><input type="password" id="password" placeholder="كلمة السر" required><button type="submit">دخول</button></form>
-<div class="error" id="errorMsg"></div><div class="info">🔐 </div></div>
+<div class="error" id="errorMsg"></div><div class="info">🔐HF2026 المطوع</div></div>
 <script>
 document.getElementById('loginForm').addEventListener('submit',async(e)=>{
 e.preventDefault();const u=document.getElementById('username').value,p=document.getElementById('password').value;
@@ -588,15 +588,20 @@ video{width:100%;border-radius:15px}
 .history-card{background:white;border-radius:10px;padding:10px;text-align:center}
 .history-card img{width:100%;height:150px;object-fit:cover;border-radius:8px}
 @media(max-width:768px){.sidebar{width:200px}.main-content{margin-right:200px}.elements-grid{grid-template-columns:1fr}}
+@media(min-width:769px){.sidebar{display:block !important}.main-content{margin-right:260px}#menuToggleBtn{display:none}}
+@media(max-width:768px){.sidebar{position:fixed;right:0;top:0;width:200px;height:100%;z-index:200}.main-content{margin-right:0 !important}}
 </style>
 </head>
 <body>
-<div class="sidebar"><h3>📸 نظام التوثيق</h3>
-<div class="nav-item active" onclick="showSection('dashboard')"><span style="margin-left:10px;">📋</span> لوحة التوثيق</div>
-<div class="nav-item" onclick="showSection('stats')"><span style="margin-left:10px;">📊</span> إحصائياتي</div>
-<div class="nav-item" onclick="showSection('history')"><span style="margin-left:10px;">🖼️</span> توثيقاتي السابقة</div>
+<div class="sidebar" id="sidebar" style="display:none;"><h3>📸 نظام التوثيق</h3>
+<div class="nav-item active" onclick="showSection('dashboard');toggleSidebar()"><span style="margin-left:10px;">📋</span> لوحة التوثيق</div>
+<div class="nav-item" onclick="showSection('stats');toggleSidebar()"><span style="margin-left:10px;">📊</span> إحصائياتي</div>
+<div class="nav-item" onclick="showSection('history');toggleSidebar()"><span style="margin-left:10px;">🖼️</span> توثيقاتي السابقة</div>
 <button class="logout-btn" onclick="logout()">🚪 تسجيل خروج</button></div>
-<div class="main-content"><div class="header"><h2>مرحباً <span id="usernameDisplay">{{ username }}</span></h2><div>📅 <span id="dateDisplay"></span></div></div>
+<div class="main-content">
+<div style="display:flex; align-items:center; margin-bottom:10px;">
+    <button id="menuToggleBtn" style="background:#667eea; color:white; border:none; border-radius:8px; padding:10px 15px; font-size:16px; cursor:pointer; margin-left:10px;">☰ القائمة</button>
+</div><div class="header"><h2>مرحباً <span id="usernameDisplay">{{ username }}</span></h2><div>📅 <span id="dateDisplay"></span></div></div>
 <div id="dashboardSection"><div class="elements-grid" id="elementsGrid"></div></div>
 <div id="statsSection" style="display:none;"><div style="background:white;border-radius:15px;padding:20px;"><h3>📊 إحصائيات التوثيقات</h3><div id="statsNumbers" style="margin-top:20px;"></div></div></div>
 <div id="historySection" style="display:none;"><div style="background:white;border-radius:15px;padding:20px;"><h3>🖼️ توثيقاتي السابقة</h3><div id="historyGrid" class="history-grid"></div></div></div></div>
@@ -630,8 +635,20 @@ function displayElements(){
 async function openCamera(elementId,witnessId){
     currentElementId=elementId;currentWitnessId=witnessId;
     document.getElementById('cameraModal').style.display='block';
-    try{stream=await navigator.mediaDevices.getUserMedia({video:true});document.getElementById('video').srcObject=stream;}
-    catch(err){alert('لا يمكن الوصول إلى الكاميرا: '+err.message);}
+    currentFacingMode = 'environment';
+    try{
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { exact: 'environment' } }
+        });
+        document.getElementById('video').srcObject = stream;
+    } catch(err){
+        try{
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            document.getElementById('video').srcObject = stream;
+        } catch(e){
+            alert('لا يمكن الوصول إلى الكاميرا: '+e.message);
+        }
+    }
 }
 async function capturePhoto(){
     const video=document.getElementById('video');const canvas=document.getElementById('canvas');
@@ -727,8 +744,17 @@ async function logout(){await fetch('/api/logout',{method:'POST'});window.locati
 document.getElementById('dateDisplay').innerText=new Date().toLocaleDateString('ar-SA');
 document.getElementById('usernameDisplay').innerText='{{ username }}';
 displayElements();
-document.getElementById('switchCameraBtn').onclick = switchCamera;
-document.getElementById('uploadImageBtn').onclick = uploadFromGallery;
+function toggleSidebar(){
+    var sidebar = document.getElementById('sidebar');
+    if(sidebar.style.display === 'none'){
+        sidebar.style.display = 'block';
+        document.querySelector('.main-content').style.marginRight = '260px';
+    } else {
+        sidebar.style.display = 'none';
+        document.querySelector('.main-content').style.marginRight = '0px';
+    }
+}
+document.getElementById('menuToggleBtn').onclick = toggleSidebar;
 </script>
 </body>
 </html>
