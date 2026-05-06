@@ -15,6 +15,8 @@ app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this-12345'
 CORS(app)
 app.static_folder = 'static'
+# أضف هذا السطر الجديد:
+app.static_url_path = '/static'
 
 # ============ إعداد المسارات للملفات ============
 BASE_DIR = os.environ.get('RENDER', False) and '/tmp' or os.getcwd()
@@ -431,8 +433,13 @@ async function loadHistory(){
             const miladiDate=new Date(item.created_at);
             const formattedMiladi=miladiDate.toLocaleDateString('ar-SA');
             const hijriDate=gregorianToHijri(item.created_at);
-            let imgSrc=item.image_path;
-            if(imgSrc&&!imgSrc.startsWith('/')&&!imgSrc.startsWith('http')){imgSrc='/'+imgSrc;}
+            let imgSrc = item.image_path;
+            if (imgSrc && !imgSrc.startsWith('http')) {
+                imgSrc = imgSrc.replace(/\\/g, '/');
+                if (!imgSrc.startsWith('/')) {
+                    imgSrc = '/' + imgSrc;
+                }
+            }
             return `<div class="history-card"><div style="background:linear-gradient(135deg,#1a2a6c,#b21f1f);color:white;padding:8px 12px;font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap;"><span>📅 ${formattedMiladi}</span><span>🕌 ${hijriDate}</span><span>📌 العنصر ${item.element_id} - الشاهد ${item.witness_id}</span></div><img src="${imgSrc}" onerror="this.src='https://via.placeholder.com/300x180?text=صورة+غير+متوفرة'"><div style="padding:10px;"><p style="font-size:12px;color:#555;margin:0;">${item.element_title.substring(0,50)}</p><p style="font-size:11px;color:#888;margin-top:5px;">${item.witness_text.substring(0,60)}...</p></div></div>`;
         }).join('');
     }else{grid.innerHTML='<p style="text-align:center;padding:20px;">📭 لا توجد توثيقات سابقة</p>';}
@@ -665,7 +672,7 @@ def save_evidence():
     witness_text = ELEMENTS[element_id]['witnesses'][witness_id - 1]
     element_title = ELEMENTS[element_id]['title']
     filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.jpg"
-    filepath = f"static/images/{filename}"
+    filepath = os.path.join(STATIC_IMAGES_DIR, filename)
     if 'base64,' in image_data:
         image_data = image_data.split('base64,')[1]
     image_bytes = base64.b64decode(image_data)
@@ -684,23 +691,6 @@ def save_evidence():
     conn.commit()
     conn.close()
     return jsonify({'success': True, 'image_path': filepath})
-
-@app.route('/api/get-my-evidences', methods=['GET'])
-def get_my_evidences():
-    if 'username' not in session:
-        return jsonify({'success': False, 'data': []})
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''SELECT * FROM evidences WHERE username=? ORDER BY created_at DESC''', (session['username'],))
-    rows = c.fetchall()
-    conn.close()
-    data = []
-    for r in rows:
-        image_path = r[6]
-        if image_path:
-            image_path = image_path.replace('\\', '/')
-        data.append({'id': r[0], 'username': r[1], 'element_id': r[2], 'element_title': r[3], 'witness_id': r[4], 'witness_text': r[5], 'image_path': image_path, 'created_at': r[8]})
-    return jsonify({'success': True, 'data': data})
 
 @app.route('/api/admin/all-evidences', methods=['GET'])
 def admin_all_evidences():
