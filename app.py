@@ -1003,23 +1003,165 @@ function switchCamera(){
 function uploadFromGallery(){
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'image/*';
+    input.accept = '*/*';  // قبول جميع أنواع الملفات
     input.onchange = async (e) => {
         const file = e.target.files[0];
         if(file){
-            const reader = new FileReader();
-            reader.onload = async (event) => {
-                const imageData = event.target.result;
-                const response = await fetch('/api/save-evidence',{
-                    method:'POST',
-                    headers:{'Content-Type':'application/json'},
-                    body:JSON.stringify({element_id:currentElementId,witness_id:currentWitnessId,image:imageData})
-                });
-                const result = await response.json();
-                if(result.success){alert('✅ تم التوثيق بنجاح!');closeCamera();if(document.getElementById('statsSection').style.display==='block')loadStats();if(document.getElementById('historySection').style.display==='block')loadHistory();}
-                else alert('❌ خطأ: '+result.error);
+            // عرض معاينة الملف قبل الرفع
+            const previewDiv = document.createElement('div');
+            previewDiv.style.position = 'fixed';
+            previewDiv.style.top = '0';
+            previewDiv.style.left = '0';
+            previewDiv.style.width = '100%';
+            previewDiv.style.height = '100%';
+            previewDiv.style.backgroundColor = 'rgba(0,0,0,0.9)';
+            previewDiv.style.zIndex = '2000';
+            previewDiv.style.display = 'flex';
+            previewDiv.style.flexDirection = 'column';
+            previewDiv.style.justifyContent = 'center';
+            previewDiv.style.alignItems = 'center';
+            
+            // عرض معلومات الملف
+            const fileInfo = document.createElement('div');
+            fileInfo.style.backgroundColor = 'white';
+            fileInfo.style.padding = '20px';
+            fileInfo.style.borderRadius = '15px';
+            fileInfo.style.textAlign = 'center';
+            fileInfo.style.maxWidth = '90%';
+            
+            const fileIcon = document.createElement('div');
+            fileIcon.style.fontSize = '64px';
+            // أيقونة حسب نوع الملف
+            if(file.type.startsWith('image/')) fileIcon.textContent = '🖼️';
+            else if(file.type === 'application/pdf') fileIcon.textContent = '📕';
+            else if(file.type.includes('word')) fileIcon.textContent = '📘';
+            else if(file.type.includes('excel') || file.type.includes('spreadsheet')) fileIcon.textContent = '📗';
+            else if(file.type.includes('powerpoint')) fileIcon.textContent = '📙';
+            else if(file.type.startsWith('text/')) fileIcon.textContent = '📄';
+            else fileIcon.textContent = '📎';
+            fileInfo.appendChild(fileIcon);
+            
+            const fileName = document.createElement('p');
+            fileName.textContent = file.name;
+            fileName.style.margin = '10px 0';
+            fileName.style.wordBreak = 'break-all';
+            fileInfo.appendChild(fileName);
+            
+            const fileSize = document.createElement('p');
+            fileSize.textContent = `الحجم: ${(file.size / 1024).toFixed(2)} KB`;
+            fileSize.style.color = '#666';
+            fileInfo.appendChild(fileSize);
+            
+            // معاينة الصورة إذا كانت صورة
+            if(file.type.startsWith('image/')){
+                const imgPreview = document.createElement('img');
+                imgPreview.style.maxWidth = '300px';
+                imgPreview.style.maxHeight = '200px';
+                imgPreview.style.marginTop = '10px';
+                imgPreview.style.borderRadius = '8px';
+                const readerPreview = new FileReader();
+                readerPreview.onload = (e) => { imgPreview.src = e.target.result; };
+                readerPreview.readAsDataURL(file);
+                fileInfo.appendChild(imgPreview);
+            }
+            
+            previewDiv.appendChild(fileInfo);
+            
+            // أزرار التأكيد والإلغاء
+            const btnContainer = document.createElement('div');
+            btnContainer.style.marginTop = '20px';
+            btnContainer.style.display = 'flex';
+            btnContainer.style.gap = '10px';
+            
+            const confirmBtn = document.createElement('button');
+            confirmBtn.textContent = '✅ تأكيد الرفع';
+            confirmBtn.style.padding = '10px 20px';
+            confirmBtn.style.backgroundColor = '#28a745';
+            confirmBtn.style.color = 'white';
+            confirmBtn.style.border = 'none';
+            confirmBtn.style.borderRadius = '8px';
+            confirmBtn.style.cursor = 'pointer';
+            
+            const cancelBtn = document.createElement('button');
+            cancelBtn.textContent = '❌ إلغاء';
+            cancelBtn.style.padding = '10px 20px';
+            cancelBtn.style.backgroundColor = '#dc3545';
+            cancelBtn.style.color = 'white';
+            cancelBtn.style.border = 'none';
+            cancelBtn.style.borderRadius = '8px';
+            cancelBtn.style.cursor = 'pointer';
+            
+            btnContainer.appendChild(confirmBtn);
+            btnContainer.appendChild(cancelBtn);
+            previewDiv.appendChild(btnContainer);
+            
+            // شريط التقدم
+            const progressBar = document.createElement('div');
+            progressBar.style.width = '80%';
+            progressBar.style.height = '10px';
+            progressBar.style.backgroundColor = '#ddd';
+            progressBar.style.borderRadius = '5px';
+            progressBar.style.marginTop = '20px';
+            progressBar.style.display = 'none';
+            const progressFill = document.createElement('div');
+            progressFill.style.width = '0%';
+            progressFill.style.height = '100%';
+            progressFill.style.backgroundColor = '#28a745';
+            progressFill.style.borderRadius = '5px';
+            progressBar.appendChild(progressFill);
+            previewDiv.appendChild(progressBar);
+            
+            document.body.appendChild(previewDiv);
+            
+            // وظيفة الرفع
+            const uploadFile = async () => {
+                confirmBtn.disabled = true;
+                cancelBtn.disabled = true;
+                progressBar.style.display = 'block';
+                
+                let progress = 0;
+                const interval = setInterval(() => {
+                    progress += 10;
+                    progressFill.style.width = progress + '%';
+                    if(progress >= 100) clearInterval(interval);
+                }, 200);
+                
+                try {
+                    const reader = new FileReader();
+                    reader.onload = async (event) => {
+                        const fileData = event.target.result;
+                        const response = await fetch('/api/save-evidence',{
+                            method:'POST',
+                            headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify({
+                                element_id:currentElementId,
+                                witness_id:currentWitnessId,
+                                image:fileData,
+                                filename:file.name,
+                                filetype:file.type
+                            })
+                        });
+                        const result = await response.json();
+                        if(result.success){
+                            alert('✅ تم رفع الملف بنجاح!');
+                            previewDiv.remove();
+                            closeCamera();
+                            if(document.getElementById('statsSection').style.display==='block')loadStats();
+                            if(document.getElementById('historySection').style.display==='block')loadHistory();
+                        } else {
+                            alert('❌ خطأ: '+result.error);
+                            previewDiv.remove();
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                } catch(err) {
+                    alert('❌ خطأ في الرفع: '+err.message);
+                    previewDiv.remove();
+                }
             };
-            reader.readAsDataURL(file);
+            
+            confirmBtn.onclick = uploadFile;
+            cancelBtn.onclick = () => previewDiv.remove();
         }
     };
     input.click();
@@ -1058,7 +1200,23 @@ async function loadHistory(){
                     <span>📌 العنصر ${item.element_id} - الشاهد ${item.witness_id}</span>
                     <button onclick="deleteEvidence('${item.id}')" style="background:#dc3545; color:white; border:none; border-radius:50%; width:24px; height:24px; cursor:pointer; font-size:14px;">✖</button>
                 </div>
-                <img src="${item.image_url}" style="width:100%; height:180px; object-fit:cover;" onerror="this.src='https://via.placeholder.com/300x180?text=صورة+غير+متوفرة'">
+                <div style="width:100%; height:180px; background:#f0f2f5; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+    ${item.file_type && item.file_type.startsWith('image/') ? 
+        `<img src="${item.image_url}" style="width:100%; height:140px; object-fit:cover;" onerror="this.src='https://via.placeholder.com/300x140?text=صورة+غير+متوفرة'">` :
+        `<div style="font-size:64px;">
+            ${item.file_type === 'application/pdf' ? '📕' : 
+              item.file_type?.includes('word') ? '📘' :
+              item.file_type?.includes('excel') ? '📗' :
+              item.file_type?.includes('powerpoint') ? '📙' :
+              item.file_type?.startsWith('text/') ? '📄' : '📎'}
+         </div>
+         <div style="font-size:12px; margin-top:5px; color:#666; text-align:center; word-break:break-all; padding:0 5px;">${item.filename || 'ملف'}</div>`
+    }
+    <div style="margin-top:10px; display:flex; gap:5px;">
+        <a href="${item.image_url}" target="_blank" style="background:#667eea; color:white; padding:4px 8px; border-radius:5px; text-decoration:none; font-size:11px;">📂 فتح</a>
+        <a href="${item.image_url}" download style="background:#28a745; color:white; padding:4px 8px; border-radius:5px; text-decoration:none; font-size:11px;">⬇️ تحميل</a>
+    </div>
+</div>
                 <div style="padding:10px;">
                     <p style="font-size:12px; color:#555; margin:0;">${item.element_title.substring(0,50)}</p>
                     <p style="font-size:11px; color:#888; margin-top:5px;">${item.witness_text.substring(0,60)}...</p>
@@ -1593,7 +1751,9 @@ def save_evidence():
     data = request.json
     element_id = data.get('element_id')
     witness_id = int(data.get('witness_id'))
-    image_data = data.get('image')
+    file_data = data.get('image')
+    filename = data.get('filename', f"file_{uuid.uuid4().hex}")
+    file_type = data.get('filetype', 'application/octet-stream')
     
     # تحويل element_id إلى str للوصول إلى ELEMENTS
     element_id_str = str(element_id)
@@ -1603,12 +1763,28 @@ def save_evidence():
     witness_text = ELEMENTS[element_id_str]['witnesses'][witness_id - 1]
     element_title = ELEMENTS[element_id_str]['title']
     
-    filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.jpg"
+    # استخراج الامتداد من اسم الملف أو من نوع الملف
+    if '.' in filename:
+        ext = filename.split('.')[-1]
+    else:
+        ext_map = {
+            'application/pdf': 'pdf',
+            'application/msword': 'doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'application/vnd.ms-excel': 'xls',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.ms-powerpoint': 'ppt',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+            'text/plain': 'txt'
+        }
+        ext = ext_map.get(file_type, 'file')
     
-    if 'base64,' in image_data:
-        image_data = image_data.split('base64,')[1]
+    new_filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.{ext}"
     
-    image_bytes = base64.b64decode(image_data)
+    if 'base64,' in file_data:
+        file_data = file_data.split('base64,')[1]
+    
+    file_bytes = base64.b64decode(file_data)
     
     # التحقق من إعدادات Supabase
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -1627,7 +1803,6 @@ def save_evidence():
         bucket_response = requests.get(bucket_url, headers=headers)
         
         if bucket_response.status_code == 404:
-            # إنشاء bucket جديد
             bucket_data = {
                 'id': 'evidence',
                 'name': 'evidence',
@@ -1638,26 +1813,25 @@ def save_evidence():
                 headers=headers,
                 json=bucket_data
             )
-            # إذا كان البوكيت موجوداً مسبقاً أو تم إنشاؤه بنجاح
             if create_bucket_response.status_code not in [200, 201, 409]:
                 return jsonify({'success': False, 'error': 'فشل إنشاء مجلد التخزين'})
         
-        # 2. رفع الصورة إلى Supabase Storage
+        # 2. رفع الملف إلى Supabase Storage
         upload_headers = {
             'apikey': SUPABASE_KEY,
             'Authorization': f'Bearer {SUPABASE_KEY}',
-            'Content-Type': 'image/jpeg'
+            'Content-Type': file_type
         }
         
-        image_upload_url = f"{SUPABASE_URL}/storage/v1/object/evidence/{filename}"
-        image_response = requests.post(image_upload_url, headers=upload_headers, data=image_bytes)
+        file_upload_url = f"{SUPABASE_URL}/storage/v1/object/evidence/{new_filename}"
+        file_response = requests.post(file_upload_url, headers=upload_headers, data=file_bytes)
         
-        if image_response.status_code not in [200, 201]:
-            return jsonify({'success': False, 'error': f'فشل رفع الصورة: {image_response.status_code} - {image_response.text}'})
+        if file_response.status_code not in [200, 201]:
+            return jsonify({'success': False, 'error': f'فشل رفع الملف: {file_response.status_code} - {file_response.text}'})
         
-        image_url = f"{SUPABASE_URL}/storage/v1/object/public/evidence/{filename}"
+        file_url = f"{SUPABASE_URL}/storage/v1/object/public/evidence/{new_filename}"
         
-        # 2. حفظ البيانات في Supabase Table
+        # 3. حفظ البيانات في Supabase Table
         db_headers = {
             'apikey': SUPABASE_KEY,
             'Authorization': f'Bearer {SUPABASE_KEY}',
@@ -1666,13 +1840,31 @@ def save_evidence():
         
         evidence_data = {
             'username': session['username'],
-            'element_id': str(element_id),  # تأكد من تحويله إلى نص
+            'element_id': str(element_id),
             'element_title': element_title,
             'witness_id': witness_id,
             'witness_text': witness_text,
-            'image_url': image_url,
+            'image_url': file_url,
+            'file_name': filename,
+            'file_type': file_type,
+            'file_size': len(file_bytes),
             'created_at': datetime.now().isoformat()
         }
+        
+        # إضافة أعمدة جديدة إذا لم تكن موجودة في الجدول
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        try:
+            c.execute("ALTER TABLE evidences ADD COLUMN file_name TEXT")
+        except: pass
+        try:
+            c.execute("ALTER TABLE evidences ADD COLUMN file_type TEXT")
+        except: pass
+        try:
+            c.execute("ALTER TABLE evidences ADD COLUMN file_size INTEGER")
+        except: pass
+        conn.commit()
+        conn.close()
         
         db_response = requests.post(
             f"{SUPABASE_URL}/rest/v1/evidences",
@@ -1681,28 +1873,27 @@ def save_evidence():
         )
         
         if db_response.status_code not in [200, 201]:
-            # طباعة الخطأ التفصيلي
             error_detail = db_response.text
             print(f"Supabase Error: {error_detail}")
             return jsonify({'success': False, 'error': f'فشل حفظ البيانات: {db_response.status_code} - {error_detail}'})
         
-        # 3. أيضاً حفظ محلياً كنسخة احتياطية (اختياري)
+        # 4. أيضاً حفظ محلياً كنسخة احتياطية
         try:
-            local_image_path = os.path.join(STATIC_IMAGES_DIR, filename)
-            with open(local_image_path, 'wb') as f:
-                f.write(image_bytes)
+            local_file_path = os.path.join(STATIC_IMAGES_DIR, new_filename)
+            with open(local_file_path, 'wb') as f:
+                f.write(file_bytes)
             
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute('''INSERT INTO evidences (username, element_id, element_title, witness_id, witness_text, image_path, image_url, synced)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, 1)''',
-                      (session['username'], element_id, element_title, witness_id, witness_text, local_image_path, image_url))
+            c.execute('''INSERT INTO evidences (username, element_id, element_title, witness_id, witness_text, image_path, image_url, synced, file_name, file_type, file_size)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)''',
+                      (session['username'], element_id, element_title, witness_id, witness_text, local_file_path, file_url, filename, file_type, len(file_bytes)))
             conn.commit()
             conn.close()
         except Exception as e:
             print(f"تحذير: فشل الحفظ المحلي: {e}")
         
-        return jsonify({'success': True, 'image_url': image_url})
+        return jsonify({'success': True, 'file_url': file_url, 'file_name': filename})
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}) 
