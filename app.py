@@ -771,16 +771,7 @@ video{width:100%;border-radius:15px}
 <div class="nav-item active" onclick="showSection('dashboard');toggleSidebar()"><span style="margin-left:10px;">📋</span> لوحة التوثيق</div>
 <div class="nav-item" onclick="showSection('stats');toggleSidebar()"><span style="margin-left:10px;">📊</span> إحصائياتي</div>
 <div class="nav-item" onclick="showSection('history');toggleSidebar()"><span style="margin-left:10px;">🖼️</span> توثيقاتي السابقة</div>
-async function logout(){
-    if(confirm('هل أنت متأكد من تسجيل الخروج؟')){
-        try {
-            await fetch('/api/logout',{method:'POST'});
-            window.location.href='/';
-        } catch(e) {
-            window.location.href='/';
-        }
-    }
-}</div>
+<button class="logout-btn" onclick="logout()">🚪 تسجيل خروج</button></div>
 <div class="main-content">
 <div style="display:flex; align-items:center; margin-bottom:10px;">
     <button id="menuToggleBtn" style="background:#667eea; color:white; border:none; border-radius:8px; padding:10px 15px; font-size:16px; cursor:pointer; margin-left:10px;">☰ القائمة</button>
@@ -1177,7 +1168,22 @@ th{background:#f8f9fa}
 <!-- Users Section -->
 <div id="usersSection" style="display:none;">
 <div class="action-buttons"><button class="btn btn-success" onclick="showAddUserModal()">➕ إضافة مستخدم جديد</button><button class="btn btn-primary" onclick="loadUsers()">🔄 تحديث القائمة</button></div>
-<div style="overflow-x:auto;margin-top:20px;"><table><thead><tr><th>#</th><th>اسم المستخدم</th><th>الاسم الكامل</th><th>النوع</th><th>عدد التوثيقات</th><th>آخر نشاط</th><th>الإجراءات</th></tr></thead><tbody id="usersTableBody"></tbody></table></div>
+<div style="overflow-x:auto; margin-top:20px;">
+<table style="width:100%; background:white; border-radius:15px; overflow:hidden;">
+<thead>
+<tr>
+<th style="padding:12px; text-align:right;">#</th>
+<th style="padding:12px; text-align:right;">اسم المستخدم</th>
+<th style="padding:12px; text-align:right;">الاسم الكامل</th>
+<th style="padding:12px; text-align:right;">النوع</th>
+<th style="padding:12px; text-align:right;">عدد التوثيقات</th>
+<th style="padding:12px; text-align:right;">آخر نشاط</th>
+<th style="padding:12px; text-align:right;">الإجراءات</th>
+</tr>
+</thead>
+<tbody id="usersTableBody"></tbody>
+</table>
+</div>
 </div>
 
 <!-- Sync Section -->
@@ -1222,6 +1228,7 @@ async function refreshData(){
         updateStats();
         updateFilters();
         drawActivityChart();
+        loadUsers(); 
     }
 }
 
@@ -1242,11 +1249,11 @@ function renderTable(){
     const start=(currentPage-1)*rowsPerPage;
     const paginated=filteredData.slice(start,start+rowsPerPage);
     const tbody=document.getElementById('tableBody');
-    if(paginated.length===0){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;">لا توجد توثيقات</td></tr>';document.getElementById('pagination').innerHTML='';return;}
-    tbody.innerHTML=paginated.map((item,i)=>`<tr><td><input type="checkbox" class="selectItem" value="${item.id}"></td><td>${start+i+1}</td><td>${item.username}</td><td>${item.element_id}</td><td style="max-width:300px;">${item.witness_text?.substring(0,50)}...</td><td>${item.image_url?`<img src="${item.image_url}" class="evidence-img" onclick="showImage('${item.image_url}')">`:'لا توجد'}</td><td>${item.created_at?.substring(0,10)}</td><td><button class="btn btn-danger" style="padding:5px 10px;" onclick="deleteEvidence('${item.id}')">🗑️</button></td></tr>`).join('');
+    if(paginated.length===0){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;">لا توجد توثيقات<\/td></tr>';document.getElementById('pagination').innerHTML='';return;}
+    tbody.innerHTML=paginated.map((item,i)=>`<tr><td><input type="checkbox" class="selectItem" value="${item.id}"><\/td><td>${start+i+1}<\/td><td>${item.username}<\/td><td>${item.element_id}<\/td><td style="max-width:300px;">${item.witness_text?.substring(0,50)}...<\/td><td>${item.image_url?`<img src="${item.image_url}" class="evidence-img" onclick="showImage('${item.image_url}')">`:'لا توجد'}<\/td><td>${item.created_at?.substring(0,10)}<\/td><td><button class="btn btn-danger" style="padding:5px 10px;" onclick="deleteEvidence('${item.id}')">🗑️<\/button><\/td><\/tr>`).join('');
     const totalPages=Math.ceil(filteredData.length/rowsPerPage);
     let paginationHtml='';
-    for(let i=1;i<=totalPages;i++) paginationHtml+=`<button onclick="goToPage(${i})" style="${i===currentPage?'background:#5a67d8':''}">${i}</button>`;
+    for(let i=1;i<=totalPages;i++) paginationHtml+=`<button onclick="goToPage(${i})" style="${i===currentPage?'background:#5a67d8':''}">${i}<\/button>`;
     document.getElementById('pagination').innerHTML=paginationHtml;
     document.getElementById('selectAll').onclick=function(e){document.querySelectorAll('.selectItem').forEach(cb=>cb.checked=e.target.checked);};
 }
@@ -1264,222 +1271,200 @@ function updateStats(){
 function updateFilters(){
     const users=[...new Set(allData.map(e=>e.username))];
     const userSelect=document.getElementById('filterUser');
-    userSelect.innerHTML='<option value="">جميع المراقبين</option>'+users.map(u=>`<option value="${u}">${u}</option>`).join('');
+    userSelect.innerHTML='<option value="">جميع المراقبين</option>'+users.map(u=>`<option value="${u}">${u}<\/option>`).join('');
     const elements=[...new Set(allData.map(e=>e.element_id))];
     const elementSelect=document.getElementById('filterElement');
-    elementSelect.innerHTML='<option value="">جميع العناصر</option>'+elements.map(el=>`<option value="${el}">العنصر ${el}</option>`).join('');
+    elementSelect.innerHTML='<option value="">جميع العناصر</option>'+elements.map(el=>`<option value="${el}">العنصر ${el}<\/option>`).join('');
 }
-async function deleteEvidence(id){if(confirm('حذف هذا التوثيق؟')){const response=await fetch('/api/delete-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});const result=await response.json();if(result.success){alert('تم الحذف');refreshData();loadUsers();}else alert('خطأ: '+result.error);}}
-function deleteSelected(){const selected=[...document.querySelectorAll('.selectItem:checked')].map(cb=>cb.value);if(selected.length===0){alert('اختر عناصر للحذف');return;}if(confirm(`حذف ${selected.length} عنصر؟`)){Promise.all(selected.map(id=>fetch('/api/delete-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}))).then(()=>{alert('تم الحذف');refreshData();loadUsers();});}}
-async function loadUsers(){
-    const response=await fetch('/api/admin/users');
-    const data=await response.json();
-    if(data.success){
-        const userStats={};
-        allData.forEach(e=>{userStats[e.username]=(userStats[e.username]||0)+1;});
-        const lastActivity={};
-        allData.forEach(e=>{if(!lastActivity[e.username]||e.created_at>lastActivity[e.username])lastActivity[e.username]=e.created_at;});
-        const tbody=document.getElementById('usersTableBody');
-        tbody.innerHTML=data.data.map((user,i)=>`
-            <tr>
-                <td>${i+1}</td>
-                <td>${user.username}</td>
-                <td>${user.full_name||'-'}</td>
-                <td>${user.username==='admin'?'مدير':'مراقب'}</td>
-                <td>${userStats[user.username]||0}</td>
-                <td>${lastActivity[user.username]?.substring(0,10)||'-'}</td>
-                <td>${user.username!=='admin'?`<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name||''}')" style="margin-left:5px;">✏️</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑</button>`:'لا يمكن تعديل'}</td>
-            </tr>
-        `).join('');
-        drawUserChart(userStats);
-        updateRankings(userStats);
+async function deleteEvidence(id){
+    if(confirm('حذف هذا التوثيق؟')){
+        const response=await fetch('/api/delete-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+        const result=await response.json();
+        if(result.success){alert('تم الحذف');refreshData();loadUsers();}else alert('خطأ: '+result.error);
     }
 }
-function}
+function deleteSelected(){
+    const selected=[...document.querySelectorAll('.selectItem:checked')].map(cb=>cb.value);
+    if(selected.length===0){alert('اختر عناصر للحذف');return;}
+    if(confirm(`حذف ${selected.length} عنصر؟`)){
+        Promise.all(selected.map(id=>fetch('/api/delete-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}))).then(()=>{alert('تم الحذف');refreshData();loadUsers();});
+    }
+}
+async function loadUsers(){
+    try {
+        const response = await fetch('/api/admin/users');
+        const data = await response.json();
+        
+        if(data.success){
+            // حساب إحصائيات كل مستخدم من التوثيقات
+            const userStats = {};
+            const lastActivity = {};
+            
+            allData.forEach(e => {
+                // عدد التوثيقات لكل مستخدم
+                userStats[e.username] = (userStats[e.username] || 0) + 1;
+                // آخر نشاط لكل مستخدم
+                if(!lastActivity[e.username] || e.created_at > lastActivity[e.username]){
+                    lastActivity[e.username] = e.created_at;
+                }
+            });
+            
+            const tbody = document.getElementById('usersTableBody');
+            if(!tbody) return;
+            
+            if(data.data && data.data.length > 0){
+                tbody.innerHTML = data.data.map((user, i) => `
+                    <tr>
+                        <td>${i+1}</td>
+                        <td>${user.username || '-'}</td>
+                        <td>${user.full_name || '-'}</td>
+                        <td>${user.username === 'admin' ? 'مدير' : 'مراقب'}</td>
+                        <td>${userStats[user.username] || 0}</td>
+                        <td>${lastActivity[user.username] ? lastActivity[user.username].substring(0,10) : '-'}</td>
+                        <td>${user.username !== 'admin' ? `<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name || ''}')" style="margin-left:5px;">✏️</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑</button>` : 'لا يمكن تعديل'}</td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">لا يوجد مستخدمين</td></tr>';
+            }
+            
+            // تحديث الرسوم البيانية
+            if(typeof drawUserChart === 'function') drawUserChart(userStats);
+            if(typeof updateRankings === 'function') updateRankings(userStats);
+        } else {
+            console.error('خطأ في جلب المستخدمين:', data.error);
+        }
+    } catch(e) {
+        console.error('خطأ في loadUsers:', e);
+    }
+}
 function drawActivityChart(){
-    const last7 drawActivityChart(){
-    const last7DaysDays=[];
-    for(let=[];
-    for(let i= i=6;i>=06;i>=0;i--;i--){const d=new){const d=new Date(); Date();d.setd.setDate(dDate(d.getDate()-i.getDate()-i);last7Days);last.push(d7Days.push(d.toISO.toISOString().split('String().split('TT')[0]);}
-    const counts')[0]);}
-    const counts==last7Days.maplast7Days.map((day=>day=>allData.filter(e=>eallData.filter(e=>e.created_at?.startsWith(day)).length);
-.created_at?.startsWith(day)).length);
-    if    if(activityChart)(activityactivityChart.destroyChart)activityChart.destroy();
-    const ctx();
-    const ctx=document=document.getElementById('activityChart.getElementById('activityChart').get').getContext('Context('2d2d');
-   ');
-    activityChart=new Chart activityChart=new Chart(ctx,{type:'line(ctx,{type:'line',data:{labels',data:{labels:last:last7Days.map(d7Days=>d.map(d=>d.substring(.substring(5)),datasets5)),datasets:[{:[{label:'label:'عدد التوثعدد التوثيقاتيقات',data',data:count:counts,bs,borderColor:'#667eeorderColor:'#667eea',a',backgroundColor:'backgroundColor:'rgbargba(102(102,126,234,126,234,0,0.1.1)',fill)',fill:true:true,tension,tension:0.3:0.3}]},}]},options:{options:{responsive:true,responsive:true,maintainAspectmaintainAspectRatio:Ratio:true}}true}});
+    const last7Days=[];
+    for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);last7Days.push(d.toISOString().split('T')[0]);}
+    const counts=last7Days.map(day=>allData.filter(e=>e.created_at?.startsWith(day)).length);
+    if(activityChart)activityChart.destroy();
+    const ctx=document.getElementById('activityChart').getContext('2d');
+    activityChart=new Chart(ctx,{type:'line',data:{labels:last7Days.map(d=>d.substring(5)),datasets:[{label:'عدد التوثيقات',data:counts,borderColor:'#667eea',backgroundColor:'rgba(102,126,234,0.1)',fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:true}});
 }
-function draw);
+function drawUserChart(userStats){
+    const sorted=Object.entries(userStats).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    if(userChart)userChart.destroy();
+    const ctx=document.getElementById('userChart').getContext('2d');
+    userChart=new Chart(ctx,{type:'bar',data:{labels:sorted.map(s=>s[0]),datasets:[{label:'عدد التوثيقات',data:sorted.map(s=>s[1]),backgroundColor:'#667eea',borderRadius:8}]},options:{responsive:true,maintainAspectRatio:true}});
 }
-function drawUserChartUserChart(userStats(userStats){
-    const sorted=){
-    const sorted=Object.Object.entries(userStats).entries(userStats).sort((a,bsort((a,b)=>b)=>b[1[1]-a[1]-a[1]).slice]).slice(0(0,10,10);
-   );
-    if(user if(userChart)userChartChart)userChart.destroy.destroy();
-    const ctx=document();
-    const ctx=document.getElementById('userChart').getContext('.getElementById('userChart').getContext('2d');
-   2d');
-    userChart userChart=new Chart=new Chart(ctx,{type(ctx,{type:'bar:'bar',data:{labels',data:{labels:sorted:sorted.map(s.map(s=>s[0=>s[0]),dat]),datasets:[{labelasets:[{label:'عدد التوثيقات',data:sorted.map(s:'عدد التوثيقات',data:sorted.map(s=>s[1]),backgroundColor=>s[1]),backgroundColor:'#667eea',:'#667eeborderRadiusa',:8borderRadius:8}]},}]},options:{responsive:true,maintainoptions:{responsive:true,maintainAspectRatio:Aspecttrue}});
+function updateRankings(userStats){
+    const sorted=Object.entries(userStats).sort((a,b)=>b[1]-a[1]);
+    const medals=['🥇','🥈','🥉'];
+    document.getElementById('rankings').innerHTML=`<h4>🏆 ترتيب المراقبين</h4>`+sorted.map(([user,count],i)=>`<p>${medals[i]||`${i+1}.`} <strong>${user}<\/strong>: ${count} توثيق<\/p>`).join('');
 }
-Ratio:true}});
+async function syncToCloud(){
+    const status=document.getElementById('syncStatus');
+    status.style.display='block';status.innerHTML='⏳ جاري المزامنة...';
+    const response=await fetch('/api/sync-to-cloud',{method:'POST'});
+    const result=await response.json();
+    if(result.success){status.innerHTML=`✅ تمت المزامنة! ${result.synced} عنصر.`;logSync(`✅ مزامنة إلى السحابة: ${result.synced} عنصر`);}else{status.innerHTML=`❌ خطأ: ${result.error}`;logSync(`❌ فشل المزامنة: ${result.error}`);}
+    setTimeout(()=>status.style.display='none',3000);
+    refreshData();
 }
-function updateRankingsfunction updateRankings(userStats(userStats){
-   ){
-    const sorted const sorted=Object=Object.entries.entries(userStats(userStats).sort).sort((a((a,b)=>,b)=>bb[1]-[1]-a[1]);
-a[1]);
-    const medals    const medals=['=['🥇','🥇','🥈','🥉'];
-    document🥈','🥉'];
-    document.getElementById('rankings.getElementById('rankings').inner').innerHTML=`HTML=`<h<h4>4>🏆🏆 ترتي ترتيب المرب المراقباقبين</h4ين</h4>`>`+sorted.map(([user,count+sorted.map(([user,count],i)=>`<p>],i)=>`<p>${med${medals[i]||`${i+1}.`}als[i]||`${i+1}.`} <strong>${user}</strong <strong>${user}</strong>: ${>: ${count}count} توث توثيق</p>`يق</).joinp>`).join('');
+async function syncFromCloud(){
+    const status=document.getElementById('syncStatus');
+    status.style.display='block';status.innerHTML='⏳ جاري الجلب...';
+    const response=await fetch('/api/sync-from-cloud',{method:'POST'});
+    const result=await response.json();
+    if(result.success){status.innerHTML=`✅ تم الجلب! ${result.synced} عنصر.`;logSync(`✅ جلب من السحابة: ${result.synced} عنصر`);}else{status.innerHTML=`❌ خطأ: ${result.error}`;logSync(`❌ فشل الجلب: ${result.error}`);}
+    setTimeout(()=>status.style.display='none',3000);
+    refreshData();
 }
-('');
-}
-async functionasync function syncToCloud(){
- syncToCloud(){
-    const    const status= status=document.getElementByIddocument.getElementById('sync('syncStatus');
-Status');
-    status    status.style.display='block.style.display='block';status';status.innerHTML='.innerHTML='⏳ ج⏳ جاري المزامنةاري المزامنة...';
-    const response=...';
-    const response=await fetchawait fetch('/api('/api/sync/sync-to-cloud-to-cloud',{',{method:'method:'POST'});
-    const resultPOST'});
-    const result=await response.json=await response.json();
-    if(result.success){();
-    if(result.success){status.innerHTML=`✅ تمت المزامنة!status.innerHTML=`✅ تمت المزامنة! ${result ${result.syn.synced}ced} عنصر عنصر.`.`;logSync(`;logSync(`✅ م✅ مزامنةزامنة إلى الس إلى السحابةحابة: ${result.s: ${result.syncedynced} عن} عنصر`صر`);});}else{status.innerHTML=`else{status.innerHTML=`❌ خط❌ خطأ:أ: ${result.error}` ${result.error}`;log;logSync(`Sync(`❌❌ فش فشل المل المزامنةزامنة: ${: ${result.errorresult.error}`);}`);}
-   }
-    setTimeout(() setTimeout(()=>status=>status.style.display.style.display='none',3000);
-='none',3000);
-    refresh    refreshData();
-Data();
-}
-async}
-async function sync function syncFromCloud(){
-   FromCloud(){
-    const status const status=document=document.getElementById('.getElementById('syncStatus');
-   syncStatus');
-    status.style.display=' status.style.display='block';block';status.innerHTML='status.innerHTML='⏳ جاري⏳ جاري الجلب...';
-    const الجلب...';
-    const response=await fetch('/api/sync-from-cloud',{method:'POST' response=await fetch('/api/sync-from-cloud',{method:'POST'});
-   });
-    const result=await const result=await response.json response.json();
-    if();
-    if(result(result.success){.success){status.innerHTML=`✅ تم الجstatus.innerHTML=`✅ تم الجلب!لب! ${result.syn ${result.synced}ced} عنصر عنصر.`;log.`;logSync(`Sync(`✅ جلب من السح✅ جلب من السحابة:ابة: ${result ${result.syn.synced} عنصر`);ced}}else عنصر`);}else{status.innerHTML=`{status.innerHTML=`❌❌ خطأ خطأ: ${: ${result.error}`;result.error}`;logSync(`❌ فlogSync(`❌ فشلشل الجلب الجلب: ${: ${result.errorresult.error}`);}`);}
-   }
-    setTimeout(()=>status setTimeout(().style.display=>status='none.style.display='none',300',3000);
-0);
-    refresh    refreshData();
-Data();
-}
-function}
-function exportCS exportCSV(){
-V(){
-    let csv="    let csv="المرالمراقباقب,رقم العن,رقم العنصر,صر,رقمرقم الشاهد الشاهد,نص الشاهد,,نص الشاهد,التاريخالتاريخ,ر,رابط الصابط الصورة\n";
-    filteredData.forEach(eورة\n";
-    filteredData.forEach(e=>{csv+==>{csv+=`"`"${e${e.username}.username}","${","${e.elemente.element_id}_id}","${","${e.we.witness_iditness_id}","}","${e${e.witness_text}","${e.created.witness_text}","${e.created_at}","${_at}","${e.image_url}"\ne.image_url}"\n`;`;});
-   });
-    const blob const blob=new Blob([csv],=new Blob([csv],{type{type:'text:'text/csv/csv;chars;charset=utfet=utf-8;'-8;'});
-   });
-    const link=document const link=document.createElement('.createElement('a');a');link.hlink.href=ref=URL.createURL.createObjectURL(blObjectURL(blob);ob);link.dlink.download=`ownload=`evidencesevidences_${new Date_${new Date().toISOString().toISOString().split().split('T('T')[0')[0]}.]}.csv`;linkcsv`;link.click();
-.click();
+function exportCSV(){
+    let csv="المراقب,رقم العنصر,رقم الشاهد,نص الشاهد,التاريخ,رابط الصورة\\n";
+    filteredData.forEach(e=>{csv+=`"${e.username}","${e.element_id}","${e.witness_id}","${e.witness_text}","${e.created_at}","${e.image_url}"\\n`;});
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`evidences_${new Date().toISOString().split('T')[0]}.csv`;link.click();
 }
 function exportExcel(){
-   }
-function exportExcel(){
-    let html=` let html=`<html><head><meta charset="<html><head><meta charset="UTF-UTF-88"><title>"><title>التوثالتوثيقاتيقات</title></head</title><body></head><body><table><table border=" border="1"><tr1"><tr><th>><th>المرالمراقب</thاقب</th><th><th>الع>العنصر</thنصر</th><th>الش><th>الشاهد</اهد</thth><th>التاريخ</th><th>التاريخ</th></tr></tr>`;
-    filtered>`;
-    filteredData.forEachData.forEach(e=>(e=>{html+=`<tr><td>${{html+=`<tr><td>${e.usernamee.username}</td}</td><td>${e.element><td>${e.element_id}</_id}</tdtd><td>><td>${e${e.witness.witness_text}</_text}</tdtd><td>><td>${e${e.created_at}</td.created_at}</td></tr></tr>`;});
-   >`;});
-    html+= html+=`</`</table></table></body></body></html>html>`;
-   `;
-    const blob const blob=new Bl=new Blobob([html],([html],{type{type:'application/vnd:'application/vnd.ms-excel'});
-    const link.ms-excel'});
-    const link=document.createElement('=document.createElement('a');a');link.href=URL.createObjectURLlink.href=URL.create(blob);link.download=`evidences_${ObjectURL(blob);link.download=`evidences_${new Datenew Date().toISOString().toISOString().split().split('T')[0]}.('T')[0]}.xlsxls`;link.click();
+    let html=`<html><head><meta charset="UTF-8"><title>التوثيقات</title><style>th,td{border:1px solid #ddd;padding:8px;text-align:right}</style></head><body><table border="1"><tr><th>المراقب</th><th>العنصر</th><th>الشاهد</th><th>التاريخ</th></tr>`;
+    filteredData.forEach(e=>{html+=`<tr><td>${e.username}</td><td>${e.element_id}</td><td>${e.witness_text}</td><td>${e.created_at}</td></tr>`;});
+    html+=`</table></body></html>`;
+    const blob=new Blob([html],{type:'application/vnd.ms-excel'});
+    const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`evidences_${new Date().toISOString().split('T')[0]}.xls`;link.click();
 }
-`;link.click();
-}
-function exportfunction exportReport(){
-    const reportReport(){
+function exportReport(){
     const reportWindow=window.open('','_blank');
-Window=window.open('','_blank');
-    report    reportWindow.document.writeWindow.d(`ocument.write(`<html<html><head><meta><head><meta charset="UTF-8"><title>تقرير التوثيق charset="UTF-8"><title>تقرير التوثيقات</ات</title><style>body{title><style>body{font-familyfont-family:A:Arial;}rial;} table{border-collapse table{border-collapse::collapse;collapse;width:width:100%} th100%} th,td,td{border:1{border:1px solidpx solid #ddd #ddd;padding;padding:8:8px;text-alignpx;text-align:right:right}</style}</style></head></head><body><h><body><h1>1>تقرير التوثيقتقرير التوثيقات</h1><pات</h1><p>التاريخ: ${new Date().>التاريخ: ${new Date().toLocaleDateString('ar-SAtoLocaleDateString('ar-SA')}</p')}</p><p>><p>إجماليإجمالي التوث التوثيقاتيقات: ${allData: ${allData.length}</.length}</p><p>عدد المرp><p>عدد المراقباقبين: ${[...ين: ${[...new Setnew Set(allData.map(e(allData.map(e=>e.username))=>e.username))].length}</p].length}</p><table><table><tr><th><tr><th>المراقب</th>المراقب</th><th>><th>العنالعنصر</th><th>صر</th><th>الشاهد</thالشاهد</th><th><th>التاريخ</th></>التاريخ</th></tr>`tr>`);
-    filteredData);
-    filteredData.forEach(e.forEach(e=>{=>{reportWindow.document.write(`<tr><td>${reportWindow.document.write(`<tr><td>${e.username}</td><tde.username}</td><td>${>${e.element_id}</e.element_id}</tdtd><td>${e><td>${e.witness_text}</td><td>.witness_text}</td><td>${e.created_at}</td${e.created_at}</td></tr></tr>`);>`);});
-   });
-    reportWindow reportWindow.document.write(`</table.document.write(`</table></body></html>`);
-    report></body></html>`);
-    reportWindow.dWindow.document.close();reportWindowocument.close();reportWindow.print();
+    reportWindow.document.write(`<html><head><meta charset="UTF-8"><title>تقرير التوثيقات</title><style>body{font-family:Arial;} th,td{border:1px solid #ddd;padding:8px;text-align:right}</style></head><body><h1>تقرير التوثيقات</h1><p>التاريخ: ${new Date().toLocaleDateString('ar-SA')}</p><p>إجمالي التوثيقات: ${allData.length}</p><p>عدد المراقبين: ${[...new Set(allData.map(e=>e.username))].length}</p><table border="1"><tr><th>المراقب</th><th>العنصر</th><th>الشاهد</th><th>التاريخ</th></tr>`);
+    filteredData.forEach(e=>{reportWindow.document.write(`<tr><td>${e.username}</td><td>${e.element_id}</td><td>${e.witness_text}</td><td>${e.created_at}</td></tr>`);});
+    reportWindow.document.write(`</table></body></html>`);
+    reportWindow.document.close();reportWindow.print();
 }
-function.print();
+function showImage(url){document.getElementById('modalImage').src=url;document.getElementById('viewImageModal').style.display='flex';}
+function closeImageModal(){document.getElementById('viewImageModal').style.display='none';}
+function showAddUserModal(){document.getElementById('addUserModal').style.display='flex';}
+function closeAddUserModal(){document.getElementById('addUserModal').style.display='none';document.getElementById('newUsername').value='';document.getElementById('newFullName').value='';document.getElementById('newPassword').value='pass123';}
+async function addUser(){
+    const username=document.getElementById('newUsername').value;
+    const full_name=document.getElementById('newFullName').value;
+    const password=document.getElementById('newPassword').value;
+    if(!username){alert('يرجى إدخال اسم المستخدم');return;}
+    const response=await fetch('/api/admin/add-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,full_name})});
+    const result=await response.json();
+    if(result.success){alert('✅ '+result.message);closeAddUserModal();loadUsers();}else{alert('❌ '+result.error);}
 }
-function showImage showImage(url){(url){document.getElementByIddocument.getElementById('modal('modalImage').Image').src=url;src=url;document.getElementByIddocument.getElementById('view('viewImageModalImageModal').style').style.display='.display='flex';flex';}
-function}
-function closeImage closeImageModal(){Modal(){document.getElementById('viewdocument.getElementById('viewImageModalImageModal').style').style.display='.display='none';none';}
-//}
-// دو دوال المستال المستخدمينخدمين (ن (نفس النسفس النسخة السابقة)
-خة السابقة)
-function showfunction showAddUserAddUserModal(){document.getElementById('addModal(){document.getElementById('addUserModalUserModal').style').style.display='.display='flex';flex';}
-function}
-function closeAddUserModal closeAddUserModal(){document(){document.getElementById('.getElementById('addUserModal').style.display='none';document.getElementById('newUsername').value='';document.getElementById('newFullName').value='';addUserModal').style.display='none';document.getElementById('newUsername').value='';document.getElementById('newFullName').value='';document.getElementByIddocument.getElementById('newPassword').value='('newPassword').value='pass123pass123';}
-';}
-async function addUser(){const username=async function addUser(){const username=document.getElementByIddocument.getElementById('newUsername').value;('newUsername').value;const full_name=const full_name=document.getElementByIddocument.getElementById('new('newFullName').valueFullName').value;const;const password=document.getElementById('newPassword').value;if(!username){alert('يرجى إدخ password=document.getElementById('newPassword').value;if(!username){alert('يرجى إدخال اسمال اسم المستخدم');return المستخدم');return;}const response=await fetch;}const response=await fetch('/api('/api/admin/add-user',/admin/add-user',{method{method:'POST',headers:'POST',headers:{':{'Content-TypeContent-Type':'application/json'':'application/json'},body},body:JSON.stringify({:JSON.stringify({username,password,username,password,full_name})});full_name})});const resultconst result=await response.json();if(result.success=await response.json();if(result.success){alert('✅ '+result.message);){alert('✅ '+result.message);closeAddUserModal();loadUsers();closeAddUserModal();load}Users();}else{alelse{alert('❌ '+result.error);ert('❌ '+result.error);}}
-let currentEdit}}
-let currentEditId=null,currentEditUsername=Id=null,currentEditUsername=null;
-null;
-function showfunction showEditUserEditUserModal(id,username,full_name){currentEditModal(id,username,full_name){currentEditId=Id=id;id;currentEditcurrentEditUsername=username;Username=username;document.getElementByIddocument.getElementById('editUserId').value=id;document.getElementById('edit('editUserId').value=id;document.getElementById('editFullNameFullName').value').value=full=full_name||_name||'';'';document.getElementByIddocument.getElementById('edit('editPassword').value='';document.getElementById('editUserModalPassword').value='';document.getElementById('editUserModal').style.display='flex';}
-').style.display='flex';}
-function closeEditUserModal(){document.getElementById('editUserModal').style.display='none';function closeEditUserModal(){document.getElementById('editUserModal').style.display='none';currentEditId=null;currentEditId=null;currentEditUsername=null;}
-currentEditUsername=null;}
-async function updateUser(){const full_name=document.getElementById('async function updateUser(){const full_name=document.getElementById('editFullName').value;const password=documenteditFullName').value;const password=document.getElementById('editPassword.getElementById('editPassword').value;const').value;const body={ body={id:currentEditid:currentEditId};Id};if(full_nameif(full_name)body)body.full_name=full_name;.full_name=full_name;if(passwordif(password)body.password=)bodypassword;const response.password=password;const response=await=await fetch('/api/admin fetch('/api/admin/update-user',/update-user',{method:'POST',headers:{'{method:'POST',headers:{'Content-TypeContent-Type':'application/json'':'application/json'},body:JSON},body:JSON.stringify(body.stringify(body)});)});const result=awaitconst result=await response.json response.json();if();if(result.success(result.success){alert){alert('✅('✅ '+result '+result.message);closeEdit.message);closeEditUserModalUserModal();loadUsers();();loadUsers();}else{alert}else{alert('❌ '+('❌ '+result.errorresult.error);}}
-);}}
-async function deleteUserasync function deleteUser(id,(id,username){if(username){confirm(`if(confirm(`حذحذف المستخدم "${ف المستخدم "${username}"username}"؟`؟`)){)){const responseconst response=await=await fetch('/ fetch('/api/adminapi/admin/delete/delete-user',-user',{method{method:'POST:'POST',headers',headers:{':{'Content-TypeContent-Type':'application':'application/json'/json'},body},body:JSON:JSON.stringify({.stringify({id,id,username})username})});const});const result= result=await responseawait response.json();if(result.success){.json();if(result.success){alert('✅ '+result.messagealert('✅ '+);loadresult.message);loadUsers();refreshData();}else{alUsers();refreshData();}else{alert('❌ert('❌ '+result.error);}}}
-async function '+result.error);}}}
-async function resetPassword(id){ resetPassword(id){const newPassword=prompt('كلمة السرconst newPassword=prompt('كلمة السر الجديدة ( الجديدة (اتاتركهاركها فارغة لل فارغة للافافترتراضي passاضي pass123)123)');if(newPassword');if(newPassword===null===null)return)return;const response;const=await fetch response=await fetch('/api('/api/admin/res/admin/reset-pet-password',assword',{method:'POST{method',headers:'POST',headers:{':{'Content-Type':'applicationContent-Type':'application/json'},body:JSON.stringify({id,/json'},body:JSON.stringify({id,new_passwordnew_password:new:newPassword||Password||'pass123'})});'pass123'})});const resultconst result=await response=await response.json.json();if();if(result.success){alert(result.success){alert('✅('✅ '+result.message); '+result.message);}else}else{alert{alert('❌ '+('❌ '+result.errorresult.error);}}
-function showSection(s);}}
+let currentEditId=null,currentEditUsername=null;
+function showEditUserModal(id,username,full_name){
+    currentEditId=id;currentEditUsername=username;
+    document.getElementById('editUserId').value=id;
+    document.getElementById('editFullName').value=full_name||'';
+    document.getElementById('editPassword').value='';
+    document.getElementById('editUserModal').style.display='flex';
+}
+function closeEditUserModal(){document.getElementById('editUserModal').style.display='none';currentEditId=null;currentEditUsername=null;}
+async function updateUser(){
+    const full_name=document.getElementById('editFullName').value;
+    const password=document.getElementById('editPassword').value;
+    const body={id:currentEditId};
+    if(full_name)body.full_name=full_name;
+    if(password)body.password=password;
+    const response=await fetch('/api/admin/update-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const result=await response.json();
+    if(result.success){alert('✅ '+result.message);closeEditUserModal();loadUsers();}else{alert('❌ '+result.error);}
+}
+async function deleteUser(id,username){
+    if(confirm(`حذف المستخدم "${username}"؟`)){
+        const response=await fetch('/api/admin/delete-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,username})});
+        const result=await response.json();
+        if(result.success){alert('✅ '+result.message);loadUsers();refreshData();}else{alert('❌ '+result.error);}
+    }
+}
+async function resetPassword(id){
+    const newPassword=prompt('كلمة السر الجديدة (اتركها فارغة للافتراضي pass123)');
+    if(newPassword===null)return;
+    const response=await fetch('/api/admin/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,new_password:newPassword||'pass123'})});
+    const result=await response.json();
+    if(result.success){alert('✅ '+result.message);}else{alert('❌ '+result.error);}
+}
 function showSection(section){
-ection){
-    document    document.getElementById('dashboardSection').style.display=.getElementById('dashboardSection').style.display=section==section==='dashboard='dashboard'?''?'block':'block':'none';
-none';
-    document.getElementById('evidences    document.getElementById('evidencesSection').style.displaySection').style.display=section==='evidences=section==='evidences'?''?'block':'none';
-    document.getElementById('block':'none';
-    document.getElementById('usersSectionusersSection').style').style.display=.display=section==='userssection=='?'='users'?'block':'block':'none';
-    documentnone';
-    document.getElementById('.getElementById('syncSectionsyncSection').style').style.display=.display=section==section==='sync'?'='sync'?'block':'block':'none';
-none';
-    document.getElementById('reports    document.getElementById('reportsSection').Section').style.display=sectionstyle.display=section==='reports==='reports'?'block':''?'block':'none';
-    documentnone';
-    document.querySelectorAll.querySelectorAll('.nav-item').('.nav-item').forEach(itemforEach(item=>item=>item.classList.remove('active'));
-   .classList.remove('active'));
-    event.target.classList.add event.target.classList.add('active('active');
-    if(s');
-    if(section==ection==='users')loadUsers();
-='users')loadUsers();
+    document.getElementById('dashboardSection').style.display=section==='dashboard'?'block':'none';
+    document.getElementById('evidencesSection').style.display=section==='evidences'?'block':'none';
+    document.getElementById('usersSection').style.display=section==='users'?'block':'none';
+    document.getElementById('syncSection').style.display=section==='sync'?'block':'none';
+    document.getElementById('reportsSection').style.display=section==='reports'?'block':'none';
+    document.querySelectorAll('.nav-item').forEach(item=>item.classList.remove('active'));
+    if(event && event.target) event.target.classList.add('active');
+    if(section==='users') loadUsers();
 }
+async function logout(){
+    await fetch('/api/logout',{method:'POST'});
+    window.location.href='/';
 }
-async functionasync function logout(){ logout(){await fetchawait fetch('/api('/api/logout',{/logout',{method:'method:'POST'}POST'});window);window.location.h.location.href='/ref='/';}
-document.getElementById';}
-document.getElementById('date('dateDisplay').innerTextDisplay').innerText=new Date=new Date().toLocaleDateString('ar-SA().toLocaleDateString('ar-SA');
-document');
-document.getElementById('.getElementById('searchInputsearchInput').add').addEventListener('input',()=>EventListener('input',{current()=>{currentPage=Page=1;1;applyFiltersapplyFilters();});
-();});
-documentdocument.getElementById('.getElementById('filterUserfilterUser').add').addEventListener('change',EventListener('change',()=>()=>{currentPage=1;{currentPage=1;applyFiltersapplyFilters();});
-();});
-document.getElementById('filterdocument.getElementById('filterElement').addEventListenerElement').addEventListener('change('change',()',()=>{currentPage=>{currentPage=1=1;applyFilters();});
-document.getElementById('filterDate;applyFilters();});
-document.getElementById('filterDate').add').addEventListener('EventListener('change',change',()=>()=>{current{currentPage=Page=1;1;applyFiltersapplyFilters();});
-();});
-refreshDatarefreshData();
-//();
-// تح تحميلميل Chart.js Chart.js
-const
-const script= script=document.createElement('script');document.createElement('script');script.srcscript.src='https://cdn='https://cdn.jsdel.jsdelivr.net/nivr.net/npm/chpm/chart.jsart.js';
-document.head.appendChild';
-document.head.appendChild(script(script);
-</script>
-</body);
+document.getElementById('dateDisplay').innerText=new Date().toLocaleDateString('ar-SA');
+document.getElementById('searchInput').addEventListener('input',()=>{currentPage=1;applyFilters();});
+document.getElementById('filterUser').addEventListener('change',()=>{currentPage=1;applyFilters();});
+document.getElementById('filterElement').addEventListener('change',()=>{currentPage=1;applyFilters();});
+document.getElementById('filterDate').addEventListener('change',()=>{currentPage=1;applyFilters();});
+refreshData();
+const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/chart.js';document.head.appendChild(script);
 </script>
 </body>
-</>
 </html>
-html>
 '''
 
 # ============ Routes API ============
