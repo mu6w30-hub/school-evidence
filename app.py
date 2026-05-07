@@ -88,20 +88,35 @@ def admin_add_user():
 
 @app.route('/api/admin/update-user', methods=['POST'])
 def admin_update_user():
-    """تعديل مستخدم (كلمة السر أو الاسم)"""
+    """تعديل مستخدم (اسم المستخدم، الاسم الكامل، كلمة السر)"""
     if 'username' not in session or session.get('username') != 'admin':
         return jsonify({'success': False, 'error': 'غير مصرح'})
     
     data = request.json
     user_id = data.get('id')
+    username = data.get('username')
     password = data.get('password')
     full_name = data.get('full_name')
+    old_username = data.get('old_username')
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
     updates = []
     values = []
+    
+    if username and username != old_username:
+        # التحقق من عدم وجود اسم المستخدم الجديد
+        c.execute("SELECT id FROM users WHERE username=?", (username,))
+        if c.fetchone():
+            conn.close()
+            return jsonify({'success': False, 'error': 'اسم المستخدم موجود مسبقاً'})
+        updates.append("username = ?")
+        values.append(username)
+        
+        # تحديث username في جدول evidences أيضاً
+        c.execute("UPDATE evidences SET username = ? WHERE username = ?", (username, old_username))
+    
     if password:
         updates.append("password = ?")
         values.append(password)
@@ -1135,17 +1150,31 @@ th{background:#f8f9fa}
 .pagination{display:flex;justify-content:center;gap:5px;margin-top:15px}
 .pagination button{padding:5px 10px;background:#667eea;color:white;border:none;border-radius:5px;cursor:pointer}
 .pagination button:hover{background:#5a67d8}
+/* التحكم في ظهور القائمة الجانبية حسب حجم الشاشة */
+@media(min-width:769px){
+    .sidebar{display:block !important}
+    .main-content{margin-right:280px}
+    #menuToggleBtn{display:none}
+}
+@media(max-width:768px){
+    .sidebar{position:fixed;right:0;top:0;width:220px;height:100%;z-index:200;background:linear-gradient(180deg,#1a2a6c,#b21f1f);overflow-y:auto}
+    .main-content{margin-right:0 !important}
+}
 </style>
 </head>
 <body>
-<div class="sidebar"><h3>👑 لوحة المدير المتقدمة</h3>
-<div class="nav-item active" onclick="showSection('dashboard')">📊 لوحة التحكم</div>
-<div class="nav-item" onclick="showSection('evidences')">📋 إدارة التوثيقات</div>
-<div class="nav-item" onclick="showSection('users')">👥 إدارة المستخدمين</div>
-<div class="nav-item" onclick="showSection('sync')">🔄 المزامنة</div>
-<div class="nav-item" onclick="showSection('reports')">📈 التقارير والإحصائيات</div>
+<div class="sidebar" id="sidebar" style="display:none;"><h3>👑 لوحة المدير المتقدمة</h3>
+<div class="nav-item active" onclick="showSection('dashboard');toggleSidebar()">📊 لوحة التحكم</div>
+<div class="nav-item" onclick="showSection('evidences');toggleSidebar()">📋 إدارة التوثيقات</div>
+<div class="nav-item" onclick="showSection('users');toggleSidebar()">👥 إدارة المستخدمين</div>
+<div class="nav-item" onclick="showSection('sync');toggleSidebar()">🔄 المزامنة</div>
+<div class="nav-item" onclick="showSection('reports');toggleSidebar()">📈 التقارير والإحصائيات</div>
 <button class="logout-btn" onclick="logout()">🚪 خروج</button></div>
-<div class="main-content"><div class="header"><h2>لوحة تحكم المدير المتقدمة</h2><div id="dateDisplay"></div></div>
+<div class="main-content">
+<div style="display:flex; align-items:center; margin-bottom:10px;">
+    <button id="menuToggleBtn" style="background:#667eea; color:white; border:none; border-radius:8px; padding:10px 15px; font-size:16px; cursor:pointer; margin-left:10px;">☰ القائمة</button>
+</div>
+<div class="header"><h2>لوحة تحكم المدير المتقدمة</h2><div id="dateDisplay"></div></div>
 
 <!-- Dashboard Section -->
 <div id="dashboardSection">
@@ -1206,7 +1235,7 @@ th{background:#f8f9fa}
 
 <!-- Modals -->
 <div id="addUserModal" class="modal"><div class="modal-content"><h3>➕ إضافة مستخدم جديد</h3><input type="text" id="newUsername" placeholder="اسم المستخدم" required><input type="text" id="newFullName" placeholder="الاسم الكامل"><input type="password" id="newPassword" placeholder="كلمة السر" value="pass123"><div class="modal-buttons"><button class="btn btn-success" onclick="addUser()">إضافة</button><button class="btn btn-danger" onclick="closeAddUserModal()">إلغاء</button></div></div></div>
-<div id="editUserModal" class="modal"><div class="modal-content"><h3>✏️ تعديل مستخدم</h3><input type="hidden" id="editUserId"><input type="text" id="editFullName" placeholder="الاسم الكامل"><input type="password" id="editPassword" placeholder="كلمة سر جديدة"><div class="modal-buttons"><button class="btn btn-primary" onclick="updateUser()">حفظ</button><button class="btn btn-danger" onclick="closeEditUserModal()">إلغاء</button></div></div></div>
+<div id="editUserModal" class="modal"><div class="modal-content"><h3>✏️ تعديل مستخدم</h3><input type="hidden" id="editUserId"><input type="text" id="editUsername" placeholder="اسم المستخدم"><input type="text" id="editFullName" placeholder="الاسم الكامل"><input type="password" id="editPassword" placeholder="كلمة سر جديدة"><div class="modal-buttons"><button class="btn btn-primary" onclick="updateUser()">حفظ</button><button class="btn btn-danger" onclick="closeEditUserModal()">إلغاء</button></div></div></div>
 <div id="viewImageModal" class="modal"><div class="modal-content" style="max-width:700px;"><img id="modalImage" style="width:100%; border-radius:10px;"><div class="modal-buttons"><button class="btn btn-danger" onclick="closeImageModal()">إغلاق</button></div></div></div>
 
 <script>
@@ -1412,17 +1441,20 @@ let currentEditId=null,currentEditUsername=null;
 function showEditUserModal(id,username,full_name){
     currentEditId=id;currentEditUsername=username;
     document.getElementById('editUserId').value=id;
+    document.getElementById('editUsername').value=username;
     document.getElementById('editFullName').value=full_name||'';
     document.getElementById('editPassword').value='';
     document.getElementById('editUserModal').style.display='flex';
 }
 function closeEditUserModal(){document.getElementById('editUserModal').style.display='none';currentEditId=null;currentEditUsername=null;}
 async function updateUser(){
+    const username=document.getElementById('editUsername').value;
     const full_name=document.getElementById('editFullName').value;
     const password=document.getElementById('editPassword').value;
-    const body={id:currentEditId};
-    if(full_name)body.full_name=full_name;
-    if(password)body.password=password;
+    const body={id:currentEditId, old_username:currentEditUsername};
+    if(username && username !== currentEditUsername) body.username=username;
+    if(full_name) body.full_name=full_name;
+    if(password) body.password=password;
     const response=await fetch('/api/admin/update-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const result=await response.json();
     if(result.success){alert('✅ '+result.message);closeEditUserModal();loadUsers();}else{alert('❌ '+result.error);}
@@ -1460,6 +1492,17 @@ document.getElementById('searchInput').addEventListener('input',()=>{currentPage
 document.getElementById('filterUser').addEventListener('change',()=>{currentPage=1;applyFilters();});
 document.getElementById('filterElement').addEventListener('change',()=>{currentPage=1;applyFilters();});
 document.getElementById('filterDate').addEventListener('change',()=>{currentPage=1;applyFilters();});
+function toggleSidebar(){
+    var sidebar = document.getElementById('sidebar');
+    if(sidebar.style.display === 'none'){
+        sidebar.style.display = 'block';
+        document.querySelector('.main-content').style.marginRight = '260px';
+    } else {
+        sidebar.style.display = 'none';
+        document.querySelector('.main-content').style.marginRight = '0px';
+    }
+}
+document.getElementById('menuToggleBtn').onclick = toggleSidebar;
 refreshData();
 const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/chart.js';document.head.appendChild(script);
 </script>
