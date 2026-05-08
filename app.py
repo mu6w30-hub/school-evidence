@@ -1,4 +1,5 @@
-
+import io
+from urllib.parse import urlparse
 from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -713,7 +714,64 @@ def sync_from_supabase():
         return {'success': False, 'error': str(e)}
     
     return {'success': False, 'synced': 0}
+def get_file_preview(file_url, file_type):
+    """إنشاء معاينة للملف (صورة مصغرة)"""
+    try:
+        # تحميل الملف من الرابط
+        response = requests.get(file_url, timeout=10)
+        if response.status_code != 200:
+            return None
+        
+        file_bytes = io.BytesIO(response.content)
+        
+        # معالجة حسب نوع الملف
+        if file_type == 'application/pdf':
+            # محاولة استخراج الصفحة الأولى كصورة (يتطلب pdf2image)
+            try:
+                from pdf2image import convert_from_bytes
+                images = convert_from_bytes(response.content, first_page=1, last_page=1)
+                if images:
+                    img_io = io.BytesIO()
+                    images[0].save(img_io, 'PNG')
+                    img_io.seek(0)
+                    return base64.b64encode(img_io.getvalue()).decode('utf-8')
+            except:
+                return None
+                
+        elif 'word' in file_type or 'document' in file_type:
+            # ملف Word - إرجاع أيقونة
+            return None
+            
+        elif 'spreadsheet' in file_type or 'excel' in file_type:
+            # ملف Excel - إرجاع أيقونة
+            return None
+            
+        elif 'presentation' in file_type or 'powerpoint' in file_type:
+            # ملف PowerPoint - إرجاع أيقونة
+            return None
+            
+        return None
+    except Exception as e:
+        print(f"خطأ في إنشاء المعاينة: {e}")
+        return None
 
+@app.route('/api/get-file-preview', methods=['GET'])
+def get_file_preview_api():
+    """API للحصول على معاينة الملف"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'error': 'غير مسجل دخول'})
+    
+    file_url = request.args.get('url')
+    file_type = request.args.get('type', '')
+    
+    if not file_url:
+        return jsonify({'success': False, 'error': 'رابط غير صالح'})
+    
+    preview = get_file_preview(file_url, file_type)
+    if preview:
+        return jsonify({'success': True, 'preview': f'data:image/png;base64,{preview}'})
+    
+    return jsonify({'success': False, 'error': 'لا يمكن إنشاء معاينة لهذا الملف'})
 # ============ صفحات HTML مدمجة ============
 LOGIN_PAGE = '''
 <!DOCTYPE html>
@@ -816,7 +874,7 @@ function displayElements(){
         const list=document.getElementById(`witnesses-${id}`);
         element.witnesses.forEach((text,idx)=>{
             const div=document.createElement('div');div.className='witness-item';
-            div.innerHTML=`<span class="witness-text">${idx+1}. ${text}</span><span class="camera-icon" onclick="openCamera('${id}',${idx+1})">📷</span>`;
+            div.innerHTML=`<span class="witness-text" style="cursor:pointer; flex:1;" onclick="showWitnessEvidences('${id}',${idx+1},'${text.replace(/'/g, "\\'")}')">${idx+1}. ${text}</span><span class="camera-icon" onclick="openCamera('${id}',${idx+1})">📷</span>`;
             list.appendChild(div);
         });
     }
@@ -1200,21 +1258,21 @@ async function loadHistory(){
                     <span>📌 العنصر ${item.element_id} - الشاهد ${item.witness_id}</span>
                     <button onclick="deleteEvidence('${item.id}')" style="background:#dc3545; color:white; border:none; border-radius:50%; width:24px; height:24px; cursor:pointer; font-size:14px;">✖</button>
                 </div>
-                <div style="width:100%; height:180px; background:#f0f2f5; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-    ${item.file_type && item.file_type.startsWith('image/') ? 
-        `<img src="${item.image_url}" style="width:100%; height:140px; object-fit:cover;" onerror="this.src='https://via.placeholder.com/300x140?text=صورة+غير+متوفرة'">` :
-        `<div style="font-size:64px;">
-            ${item.file_type === 'application/pdf' ? '📕' : 
-              item.file_type?.includes('word') ? '📘' :
-              item.file_type?.includes('excel') ? '📗' :
-              item.file_type?.includes('powerpoint') ? '📙' :
-              item.file_type?.startsWith('text/') ? '📄' : '📎'}
-         </div>
-         <div style="font-size:12px; margin-top:5px; color:#666; text-align:center; word-break:break-all; padding:0 5px;">${item.filename || 'ملف'}</div>`
-    }
-    <div style="margin-top:10px; display:flex; gap:5px;">
-        <a href="${item.image_url}" target="_blank" style="background:#667eea; color:white; padding:4px 8px; border-radius:5px; text-decoration:none; font-size:11px;">📂 فتح</a>
-        <a href="${item.image_url}" download style="background:#28a745; color:white; padding:4px 8px; border-radius:5px; text-decoration:none; font-size:11px;">⬇️ تحميل</a>
+                <div style="width:100%; height:180px; background:#f0f2f5; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer;" onclick="showEvidenceDetails('${item.id}')">
+${item.file_type && item.file_type.startsWith('image/') ? 
+    `<img src="${item.image_url}" style="width:100%; height:140px; object-fit:cover;" onerror="this.src='https://via.placeholder.com/300x140?text=صورة+غير+متوفرة'">` :
+    `<div style="font-size:64px;">
+        ${item.file_type === 'application/pdf' ? '📕' : 
+          item.file_type?.includes('word') ? '📘' :
+          item.file_type?.includes('excel') ? '📗' :
+          item.file_type?.includes('powerpoint') ? '📙' :
+          item.file_type?.startsWith('text/') ? '📄' : '📎'}
+     </div>
+     <div style="font-size:12px; margin-top:5px; color:#666; text-align:center; word-break:break-all; padding:0 5px;">${item.filename || 'ملف'}</div>`
+}
+    <div style="margin-top:10px; display:flex; gap:5px; pointer-events:auto;">
+        <a href="${item.image_url}" target="_blank" style="background:#667eea; color:white; padding:4px 8px; border-radius:5px; text-decoration:none; font-size:11px;" onclick="event.stopPropagation();">📂 فتح</a>
+        <a href="${item.image_url}" download style="background:#28a745; color:white; padding:4px 8px; border-radius:5px; text-decoration:none; font-size:11px;" onclick="event.stopPropagation();">⬇️ تحميل</a>
     </div>
 </div>
                 <div style="padding:10px;">
@@ -1262,6 +1320,179 @@ async function deleteEvidence(id){
         } else {
             alert('❌ خطأ: '+result.error);
         }
+    }
+}
+async function showEvidenceDetails(id){
+    const response = await fetch(`/api/get-evidence-by-id?id=${id}`);
+    const result = await response.json();
+    if(result.success){
+        const item = result.data;
+        const miladiDate = new Date(item.created_at);
+        const formattedMiladi = miladiDate.toLocaleDateString('ar-SA');
+        const hijriDate = gregorianToHijri(item.created_at);
+        
+        // إنشاء نافذة منبثقة
+        const modalDiv = document.createElement('div');
+        modalDiv.style.position = 'fixed';
+        modalDiv.style.top = '0';
+        modalDiv.style.left = '0';
+        modalDiv.style.width = '100%';
+        modalDiv.style.height = '100%';
+        modalDiv.style.backgroundColor = 'rgba(0,0,0,0.85)';
+        modalDiv.style.zIndex = '3000';
+        modalDiv.style.display = 'flex';
+        modalDiv.style.justifyContent = 'center';
+        modalDiv.style.alignItems = 'center';
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.style.backgroundColor = 'white';
+        contentDiv.style.borderRadius = '20px';
+        contentDiv.style.maxWidth = '500px';
+        contentDiv.style.width = '90%';
+        contentDiv.style.maxHeight = '90vh';
+        contentDiv.style.overflow = 'auto';
+        contentDiv.style.padding = '20px';
+        contentDiv.style.direction = 'rtl';
+        
+        // عرض الملف أو الصورة
+        let fileHtml = '';
+        if(item.file_type && item.file_type.startsWith('image/')){
+            fileHtml = `<img src="${item.image_url}" style="width:100%; max-height:300px; object-fit:contain; border-radius:10px; margin-bottom:15px;">`;
+        } else {
+            let fileIcon = '📎';
+            if(item.file_type === 'application/pdf') fileIcon = '📕';
+            else if(item.file_type?.includes('word')) fileIcon = '📘';
+            else if(item.file_type?.includes('excel')) fileIcon = '📗';
+            else if(item.file_type?.includes('powerpoint')) fileIcon = '📙';
+            else if(item.file_type?.startsWith('text/')) fileIcon = '📄';
+            
+            fileHtml = `
+                <div style="text-align:center; padding:20px; background:#f0f2f5; border-radius:15px; margin-bottom:15px;">
+                    <div style="font-size:80px;">${fileIcon}</div>
+                    <div style="font-size:14px; color:#666; margin-top:10px; word-break:break-all;">${item.file_name || 'ملف'}</div>
+                    ${item.file_size ? `<div style="font-size:12px; color:#999;">الحجم: ${(item.file_size/1024).toFixed(2)} KB</div>` : ''}
+                    <div style="margin-top:15px; display:flex; gap:10px; justify-content:center;">
+                        <a href="${item.image_url}" target="_blank" style="background:#667eea; color:white; padding:8px 16px; border-radius:8px; text-decoration:none;">📂 فتح الملف</a>
+                        <a href="${item.image_url}" download style="background:#28a745; color:white; padding:8px 16px; border-radius:8px; text-decoration:none;">⬇️ تحميل</a>
+                    </div>
+                </div>
+            `;
+        }
+        
+        contentDiv.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                <h3 style="margin:0;">📋 تفاصيل التوثيق</h3>
+                <button id="closeModalBtn" style="background:#dc3545; color:white; border:none; border-radius:50%; width:30px; height:30px; cursor:pointer; font-size:16px;">✖</button>
+            </div>
+            ${fileHtml}
+            <div style="background:#f8f9fa; padding:12px; border-radius:10px; margin-bottom:10px;">
+                <p><strong>📌 العنصر:</strong> ${item.element_title}</p>
+                <p><strong>📝 الشاهد:</strong> ${item.witness_text}</p>
+                <p><strong>👤 المراقب:</strong> ${item.username}</p>
+                <p><strong>📅 التاريخ الميلادي:</strong> ${formattedMiladi}</p>
+                <p><strong>🕌 التاريخ الهجري:</strong> ${hijriDate}</p>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:15px;">
+                <button id="closeBtn" style="flex:1; background:#667eea; color:white; padding:10px; border:none; border-radius:8px; cursor:pointer;">إغلاق</button>
+            </div>
+        `;
+        
+        modalDiv.appendChild(contentDiv);
+        document.body.appendChild(modalDiv);
+        
+        const closeModal = () => modalDiv.remove();
+        contentDiv.querySelector('#closeModalBtn').onclick = closeModal;
+        contentDiv.querySelector('#closeBtn').onclick = closeModal;
+        modalDiv.onclick = (e) => { if(e.target === modalDiv) closeModal(); };
+    } else {
+        alert('❌ خطأ في تحميل البيانات');
+    }
+}
+async function showWitnessEvidences(elementId, witnessId, witnessText){
+    const response = await fetch(`/api/get-evidences-by-witness?element_id=${encodeURIComponent(elementId)}&witness_id=${witnessId}`);
+    const result = await response.json();
+    
+    if(result.success && result.data.length > 0){
+        const modalDiv = document.createElement('div');
+        modalDiv.style.position = 'fixed';
+        modalDiv.style.top = '0';
+        modalDiv.style.left = '0';
+        modalDiv.style.width = '100%';
+        modalDiv.style.height = '100%';
+        modalDiv.style.backgroundColor = 'rgba(0,0,0,0.85)';
+        modalDiv.style.zIndex = '3000';
+        modalDiv.style.display = 'flex';
+        modalDiv.style.justifyContent = 'center';
+        modalDiv.style.alignItems = 'center';
+        modalDiv.style.overflow = 'auto';
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.style.backgroundColor = 'white';
+        contentDiv.style.borderRadius = '20px';
+        contentDiv.style.maxWidth = '600px';
+        contentDiv.style.width = '90%';
+        contentDiv.style.margin = '20px auto';
+        contentDiv.style.maxHeight = '90vh';
+        contentDiv.style.overflow = 'auto';
+        contentDiv.style.padding = '20px';
+        contentDiv.style.direction = 'rtl';
+        
+        let filesHtml = '<div style="display:flex; flex-direction:column; gap:15px;">';
+        for(const item of result.data){
+            let fileIcon = '📎';
+            let previewHtml = '';
+            if(item.file_type && item.file_type.startsWith('image/')){
+                previewHtml = `<img src="${item.image_url}" style="width:100%; height:120px; object-fit:cover; border-radius:8px;">`;
+            } else {
+                if(item.file_type === 'application/pdf') fileIcon = '📕';
+                else if(item.file_type?.includes('word')) fileIcon = '📘';
+                else if(item.file_type?.includes('excel')) fileIcon = '📗';
+                else if(item.file_type?.includes('powerpoint')) fileIcon = '📙';
+                else if(item.file_type?.startsWith('text/')) fileIcon = '📄';
+                
+                previewHtml = `<div style="text-align:center; font-size:48px;">${fileIcon}</div>`;
+            }
+            
+            const itemDate = new Date(item.created_at);
+            const formattedDate = itemDate.toLocaleDateString('ar-SA');
+            
+            filesHtml += `
+                <div style="background:#f8f9fa; border-radius:12px; padding:12px; cursor:pointer;" onclick="showEvidenceDetails('${item.id}')">
+                    ${previewHtml}
+                    <div style="margin-top:8px;">
+                        <div style="font-size:12px; color:#666;">${item.file_name || 'ملف'}</div>
+                        <div style="font-size:11px; color:#999;">${formattedDate}</div>
+                    </div>
+                    <div style="margin-top:8px; display:flex; gap:8px;">
+                        <a href="${item.image_url}" target="_blank" style="background:#667eea; color:white; padding:4px 8px; border-radius:5px; text-decoration:none; font-size:11px;" onclick="event.stopPropagation();">📂 فتح</a>
+                        <a href="${item.image_url}" download style="background:#28a745; color:white; padding:4px 8px; border-radius:5px; text-decoration:none; font-size:11px;" onclick="event.stopPropagation();">⬇️ تحميل</a>
+                    </div>
+                </div>
+            `;
+        }
+        filesHtml += '</div>';
+        
+        contentDiv.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                <h3 style="margin:0;">📁 ملفات الشاهد: ${witnessText.substring(0,50)}...</h3>
+                <button id="closeModalBtn" style="background:#dc3545; color:white; border:none; border-radius:50%; width:30px; height:30px; cursor:pointer; font-size:16px;">✖</button>
+            </div>
+            <p style="margin-bottom:15px; color:#666;">عدد الملفات المرفوعة: ${result.data.length}</p>
+            ${filesHtml}
+            <div style="margin-top:15px;">
+                <button id="closeBtn" style="width:100%; background:#667eea; color:white; padding:10px; border:none; border-radius:8px; cursor:pointer;">إغلاق</button>
+            </div>
+        `;
+        
+        modalDiv.appendChild(contentDiv);
+        document.body.appendChild(modalDiv);
+        
+        const closeModal = () => modalDiv.remove();
+        contentDiv.querySelector('#closeModalBtn').onclick = closeModal;
+        contentDiv.querySelector('#closeBtn').onclick = closeModal;
+        modalDiv.onclick = (e) => { if(e.target === modalDiv) closeModal(); };
+    } else {
+        alert('📭 لا توجد ملفات مرفوعة لهذا الشاهد');
     }
 }
 </script>
@@ -2044,6 +2275,132 @@ def api_sync_from_cloud():
         return jsonify({'success': False, 'error': 'غير مصرح'})
     result = sync_from_supabase()
     return jsonify(result)
+
+@app.route('/api/get-evidence-by-id', methods=['GET'])
+def get_evidence_by_id():
+    if 'username' not in session:
+        return jsonify({'success': False, 'error': 'غير مسجل دخول'})
+    
+    evidence_id = request.args.get('id')
+    if not evidence_id:
+        return jsonify({'success': False, 'error': 'معرف غير صالح'})
+    
+    # محاولة الجلب من Supabase أولاً
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}'
+            }
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/evidences?id=eq.{evidence_id}",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    item = data[0]
+                    return jsonify({
+                        'success': True,
+                        'data': {
+                            'id': item.get('id'),
+                            'username': item.get('username'),
+                            'element_id': item.get('element_id'),
+                            'element_title': item.get('element_title'),
+                            'witness_id': item.get('witness_id'),
+                            'witness_text': item.get('witness_text'),
+                            'image_url': item.get('image_url'),
+                            'file_name': item.get('file_name', 'ملف'),
+                            'file_type': item.get('file_type', ''),
+                            'file_size': item.get('file_size', 0),
+                            'created_at': item.get('created_at')
+                        }
+                    })
+        except Exception as e:
+            print(f"خطأ في جلب البيانات من Supabase: {e}")
+    
+    # الرجوع إلى قاعدة البيانات المحلية
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''SELECT * FROM evidences WHERE id = ? AND username = ?''', (evidence_id, session['username']))
+    row = c.fetchone()
+    conn.close()
+    
+    if row:
+        return jsonify({
+            'success': True,
+            'data': {
+                'id': row[0], 'username': row[1], 'element_id': row[2], 'element_title': row[3],
+                'witness_id': row[4], 'witness_text': row[5], 'image_url': row[7], 'created_at': row[8]
+            }
+        })
+    
+    return jsonify({'success': False, 'error': 'التوثيق غير موجود'})
+
+@app.route('/api/get-evidences-by-witness', methods=['GET'])
+def get_evidences_by_witness():
+    if 'username' not in session:
+        return jsonify({'success': False, 'error': 'غير مسجل دخول'})
+    
+    element_id = request.args.get('element_id')
+    witness_id = request.args.get('witness_id')
+    
+    if not element_id or not witness_id:
+        return jsonify({'success': False, 'error': 'بيانات غير مكتملة'})
+    
+    # محاولة الجلب من Supabase أولاً
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}'
+            }
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/evidences?username=eq.{session['username']}&element_id=eq.{element_id}&witness_id=eq.{witness_id}&order=created_at.desc",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                formatted_data = []
+                for item in data:
+                    formatted_data.append({
+                        'id': item.get('id'),
+                        'image_url': item.get('image_url'),
+                        'file_name': item.get('file_name', 'ملف'),
+                        'file_type': item.get('file_type', ''),
+                        'file_size': item.get('file_size', 0),
+                        'created_at': item.get('created_at'),
+                        'element_title': item.get('element_title'),
+                        'witness_text': item.get('witness_text')
+                    })
+                return jsonify({'success': True, 'data': formatted_data})
+        except Exception as e:
+            print(f"خطأ في جلب البيانات من Supabase: {e}")
+    
+    # الرجوع إلى قاعدة البيانات المحلية
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''SELECT * FROM evidences WHERE username=? AND element_id=? AND witness_id=? ORDER BY created_at DESC''',
+              (session['username'], element_id, witness_id))
+    rows = c.fetchall()
+    conn.close()
+    
+    data = []
+    for r in rows:
+        data.append({
+            'id': r[0],
+            'image_url': r[7],
+            'created_at': r[8],
+            'element_title': r[3],
+            'witness_text': r[5]
+        })
+    
+    return jsonify({'success': True, 'data': data})
+
 
 # ============ تشغيل التطبيق ============
 if __name__ == '__main__':
