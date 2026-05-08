@@ -570,7 +570,13 @@ def init_local_db():
                   image_url TEXT,
                   synced INTEGER DEFAULT 0,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    
+    # إضافة جدول صلاحيات المراقبين
+    c.execute('''CREATE TABLE IF NOT EXISTS user_permissions
+                (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT,
+                element_id TEXT,
+                can_access INTEGER DEFAULT 1,
+                UNIQUE(username, element_id))''')
     # إضافة 11 مستخدم (مدير + 10 مراقبين)
     users = [
         ('admin', 'admin123', 'مدير النظام'),
@@ -754,6 +760,81 @@ def get_file_preview(file_url, file_type):
     except Exception as e:
         print(f"خطأ في إنشاء المعاينة: {e}")
         return None
+@app.route('/api/admin/permissions', methods=['GET'])
+def admin_get_permissions():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT username, element_id, can_access FROM user_permissions")
+    rows = c.fetchall()
+    conn.close()
+    
+    permissions = [{'username': r[0], 'element_id': r[1], 'can_access': r[2]} for r in rows]
+    return jsonify({'success': True, 'data': permissions})
+
+@app.route('/api/admin/set-permission', methods=['POST'])
+def admin_set_permission():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    data = request.json
+    username = data.get('username')
+    element_id = data.get('element_id')
+    can_access = data.get('can_access', 1)
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''INSERT OR REPLACE INTO user_permissions (username, element_id, can_access)
+                 VALUES (?, ?, ?)''', (username, element_id, can_access))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'message': 'تم تحديث الصلاحية'})
+
+@app.route('/api/admin/get-user-elements', methods=['GET'])
+def admin_get_user_elements():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    username = request.args.get('username')
+    if not username:
+        return jsonify({'success': False, 'error': 'اسم المستخدم مطلوب'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT element_id FROM user_permissions WHERE username=? AND can_access=1", (username,))
+    rows = c.fetchall()
+    conn.close()
+    
+    elements = [r[0] for r in rows]
+    return jsonify({'success': True, 'data': elements})
+
+@app.route('/api/admin/all-elements', methods=['GET'])
+def admin_all_elements():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    return jsonify({'success': True, 'elements': ELEMENTS})
+@app.route('/api/get-my-elements', methods=['GET'])
+def get_my_elements():
+    if 'username' not in session:
+        return jsonify({'success': False, 'error': 'غير مسجل دخول'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT element_id FROM user_permissions WHERE username=? AND can_access=1", (session['username'],))
+    rows = c.fetchall()
+    conn.close()
+    
+    allowed_elements = [r[0] for r in rows]
+    
+    # إذا لم تكن هناك صلاحيات محددة، أعطِ جميع العناصر
+    if not allowed_elements:
+        allowed_elements = list(ELEMENTS.keys())
+    
+    return jsonify({'success': True, 'data': allowed_elements})
 
 @app.route('/api/get-file-preview', methods=['GET'])
 def get_file_preview_api():
@@ -844,6 +925,7 @@ video{width:100%;border-radius:15px}
 <div class="nav-item active" onclick="showSection('dashboard');toggleSidebar()"><span style="margin-left:10px;">📋</span> لوحة التوثيق</div>
 <div class="nav-item" onclick="showSection('stats');toggleSidebar()"><span style="margin-left:10px;">📊</span> إحصائياتي</div>
 <div class="nav-item" onclick="showSection('history');toggleSidebar()"><span style="margin-left:10px;">🖼️</span> توثيقاتي السابقة</div>
+<button class="logout-btn" onclick="showChangePasswordModal()" style="margin-bottom:10px;">🔑 تغيير كلمة السر</button>
 <button class="logout-btn" onclick="logout()">🚪 تسجيل خروج</button></div>
 <div class="main-content">
 <div style="display:flex; align-items:center; margin-bottom:10px;">
@@ -854,8 +936,43 @@ video{width:100%;border-radius:15px}
 <div id="historySection" style="display:none;"><div style="background:white;border-radius:15px;padding:20px;"><h3>🖼️ توثيقاتي السابقة</h3><div id="historyGrid" class="history-grid"></div></div></div></div>
 <div id="cameraModal" class="modal"><div class="modal-content"><video id="video" autoplay playsinline></video><div style="display:flex; gap:10px; margin-top:15px;"><button class="capture-btn" id="switchCameraBtn" style="background:#17a2b8; flex:1;">🔄 تبديل الكاميرا</button><button class="capture-btn" id="uploadImageBtn" style="background:#6c757d; flex:1;">📁 اختيار من المعرض</button></div><button class="capture-btn" onclick="capturePhoto()" style="margin-top:10px;">📷 التقاط صورة</button><button class="capture-btn close-modal" onclick="closeCamera()" style="margin-top:10px; background:#dc3545;">إلغاء</button></div></div>
 <canvas id="canvas" style="display:none"></canvas>
+<div id="changePasswordModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:3000; justify-content:center; align-items:center;">
+    <div style="background:white; border-radius:15px; padding:25px; width:90%; max-width:400px;">
+        <h3 style="margin-bottom:15px;">🔑 تغيير كلمة السر</h3>
+        <input type="password" id="oldPassword" placeholder="كلمة السر الحالية" style="width:100%; padding:10px; margin:10px 0; border:1px solid #ddd; border-radius:8px;">
+        <input type="password" id="newPassword" placeholder="كلمة السر الجديدة" style="width:100%; padding:10px; margin:10px 0; border:1px solid #ddd; border-radius:8px;">
+        <input type="password" id="confirmPassword" placeholder="تأكيد كلمة السر الجديدة" style="width:100%; padding:10px; margin:10px 0; border:1px solid #ddd; border-radius:8px;">
+        <div style="display:flex; gap:10px; margin-top:15px;">
+            <button onclick="changePassword()" style="flex:1; background:#28a745; color:white; padding:10px; border:none; border-radius:8px;">تأكيد</button>
+            <button onclick="closeChangePasswordModal()" style="flex:1; background:#dc3545; color:white; padding:10px; border:none; border-radius:8px;">إلغاء</button>
+        </div>
+        <div id="passwordMsg" style="color:#c00; margin-top:10px; text-align:center;"></div>
+    </div>
+</div>
 <script>
-const elements = {{ elements | tojson }};
+let elements = {};
+let allowedElements = [];
+
+async function loadAllowedElements() {
+    const response = await fetch('/api/get-my-elements');
+    const data = await response.json();
+    if (data.success) {
+        allowedElements = data.data;
+        // تصفية العناصر المسموحة فقط
+        const allElements = {{ elements | tojson }};
+        elements = {};
+        for (const [id, element] of Object.entries(allElements)) {
+            if (allowedElements.includes(id)) {
+                elements[id] = element;
+            }
+        }
+        displayElements();
+    } else {
+        // في حالة الخطأ، عرض جميع العناصر
+        elements = {{ elements | tojson }};
+        displayElements();
+    }
+}
 let currentElementId=null,currentWitnessId=null,stream=null;
 let currentFacingMode = 'environment';
 function showSection(section){
@@ -1291,7 +1408,7 @@ async function logout(){
 }
 document.getElementById('dateDisplay').innerText=new Date().toLocaleDateString('ar-SA');
 document.getElementById('usernameDisplay').innerText='{{ username }}';
-displayElements();
+loadAllowedElements();
 function toggleSidebar(){
     var sidebar = document.getElementById('sidebar');
     if(sidebar.style.display === 'none'){
@@ -1320,6 +1437,45 @@ async function deleteEvidence(id){
         } else {
             alert('❌ خطأ: '+result.error);
         }
+    }
+}
+function showChangePasswordModal(){
+    document.getElementById('changePasswordModal').style.display = 'flex';
+}
+function closeChangePasswordModal(){
+    document.getElementById('changePasswordModal').style.display = 'none';
+    document.getElementById('oldPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('confirmPassword').value = '';
+    document.getElementById('passwordMsg').innerText = '';
+}
+async function changePassword(){
+    const oldPassword = document.getElementById('oldPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+    if(!oldPassword || !newPassword || !confirmPassword){
+        document.getElementById('passwordMsg').innerText = '❌ الرجاء ملء جميع الحقول';
+        return;
+    }
+    if(newPassword !== confirmPassword){
+        document.getElementById('passwordMsg').innerText = '❌ كلمة السر الجديدة غير متطابقة';
+        return;
+    }
+    if(newPassword.length < 4){
+        document.getElementById('passwordMsg').innerText = '❌ كلمة السر يجب أن تكون 4 أحرف على الأقل';
+        return;
+    }
+    const response = await fetch('/api/change-password',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({old_password:oldPassword, new_password:newPassword})
+    });
+    const result = await response.json();
+    if(result.success){
+        alert('✅ تم تغيير كلمة السر بنجاح');
+        closeChangePasswordModal();
+    } else {
+        document.getElementById('passwordMsg').innerText = '❌ ' + result.error;
     }
 }
 async function showEvidenceDetails(id){
@@ -1553,11 +1709,12 @@ th{background:#f8f9fa}
 </head>
 <body>
 <div class="sidebar" id="sidebar" style="display:none;"><h3>👑 لوحة المدير المتقدمة</h3>
-<div class="nav-item active" onclick="showSection('dashboard');toggleSidebar()">📊 لوحة التحكم</div>
-<div class="nav-item" onclick="showSection('evidences');toggleSidebar()">📋 إدارة التوثيقات</div>
-<div class="nav-item" onclick="showSection('users');toggleSidebar()">👥 إدارة المستخدمين</div>
-<div class="nav-item" onclick="showSection('sync');toggleSidebar()">🔄 المزامنة</div>
-<div class="nav-item" onclick="showSection('reports');toggleSidebar()">📈 التقارير والإحصائيات</div>
+<div class="nav-item active" onclick="showSection('dashboard', event);toggleSidebar()">📊 لوحة التحكم</div>
+<div class="nav-item" onclick="showSection('evidences', event);toggleSidebar()">📋 إدارة التوثيقات</div>
+<div class="nav-item" onclick="showSection('users', event);toggleSidebar()">👥 إدارة المستخدمين</div>
+<div class="nav-item" onclick="showSection('permissions', event);toggleSidebar()">🔐 صلاحيات العناصر</div>
+<div class="nav-item" onclick="showSection('sync', event);toggleSidebar()">🔄 المزامنة</div>
+<div class="nav-item" onclick="showSection('reports', event);toggleSidebar()">📈 التقارير والإحصائيات</div>
 <button class="logout-btn" onclick="logout()">🚪 خروج</button></div>
 <div class="main-content">
 <div style="display:flex; align-items:center; margin-bottom:10px;">
@@ -1612,6 +1769,23 @@ th{background:#f8f9fa}
 <h4>ℹ️ معلومات المزامنة</h4><p><span id="syncInfo">جاري التحميل...</span></p>
 <hr><h4>📊 سجل المزامنة</h4><div id="syncLog" style="max-height:200px; overflow-y:auto; font-size:12px;"></div>
 </div></div>
+
+<!-- Permissions Section (في المكان الصحيح، خارج الشريط الجانبي) -->
+<div id="permissionsSection" style="display:none;">
+<div style="background:white; border-radius:15px; padding:20px;">
+    <h3>🔐 إدارة صلاحيات العناصر للمراقبين</h3>
+    <div class="filter-bar" style="margin-top:15px;">
+        <select id="permUserSelect" onchange="loadUserElements()">
+            <option value="">--- اختر المراقب ---</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadUserElements()">📋 عرض العناصر المسموحة</button>
+        <button class="btn btn-success" onclick="saveAllPermissions()">💾 حفظ جميع الصلاحيات</button>
+    </div>
+    <div id="elementsPermissionsGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:10px; margin-top:20px; max-height:500px; overflow-y:auto; padding:10px; background:#f8f9fa; border-radius:15px;">
+    </div>
+    <div id="permMessage" style="margin-top:15px; padding:10px; border-radius:8px; display:none;"></div>
+</div>
+</div>
 
 <!-- Reports Section -->
 <div id="reportsSection" style="display:none;">
@@ -1862,15 +2036,119 @@ async function resetPassword(id){
     const result=await response.json();
     if(result.success){alert('✅ '+result.message);}else{alert('❌ '+result.error);}
 }
-function showSection(section){
+async function loadPermissionsUsers(){
+    const response = await fetch('/api/admin/users');
+    const data = await response.json();
+    if(data.success){
+        const select = document.getElementById('permUserSelect');
+        select.innerHTML = '<option value="">--- اختر المراقب ---</option>';
+        data.data.forEach(user => {
+            if(user.username !== 'admin'){
+                select.innerHTML += `<option value="${user.username}">${user.username} - ${user.full_name || ''}</option>`;
+            }
+        });
+    }
+    // تنظيف الـ grid عند التبديل بين المستخدمين
+    document.getElementById('elementsPermissionsGrid').innerHTML = '';
+    changedPermissions = {};
+}
+
+async function loadUserElements(){
+    const username = document.getElementById('permUserSelect').value;
+    if(!username){
+        document.getElementById('permMessage').innerHTML = '<div style="color:#c00;">❌ الرجاء اختيار مراقب</div>';
+        document.getElementById('permMessage').style.display = 'block';
+        setTimeout(()=>document.getElementById('permMessage').style.display='none',2000);
+        return;
+    }
+    
+    // جلب الصلاحيات الحالية للمستخدم
+    const permResponse = await fetch(`/api/admin/get-user-elements?username=${encodeURIComponent(username)}`);
+    const permData = await permResponse.json();
+    const allowedElements = permData.success ? permData.data : [];
+    
+    // جلب جميع العناصر من الخادم (API جديد)
+    const elementsResponse = await fetch('/api/admin/all-elements');
+    const elementsData = await elementsResponse.json();
+    
+    if(elementsData.success){
+        const grid = document.getElementById('elementsPermissionsGrid');
+        grid.innerHTML = `<div style="grid-column:1/-1; background:#e9ecef; padding:10px; border-radius:10px; margin-bottom:10px;">
+                            <strong>👤 المراقب: ${username}</strong>
+                            <span style="margin-right:20px;">✅ اختر العناصر المسموح له بتوثيقها</span>
+                         </div>`;
+        
+        for(const [id, element] of Object.entries(elementsData.elements)){
+            const isChecked = allowedElements.includes(id);
+            grid.innerHTML += `
+                <div style="background:white; border-radius:10px; padding:12px; box-shadow:0 1px 3px rgba(0,0,0,0.1); display:flex; align-items:center; gap:10px;">
+                    <input type="checkbox" id="perm_${id.replace(/[^a-zA-Z0-9]/g,'_')}" value="${id}" ${isChecked ? 'checked' : ''} 
+                           onchange="markPermissionChanged('${username}','${id.replace(/'/g, "\\'")}',this.checked)">
+                    <label style="flex:1; cursor:pointer;" for="perm_${id.replace(/[^a-zA-Z0-9]/g,'_')}">
+                        <strong>📌 ${id}</strong> - ${element.title.substring(0,60)}
+                    </label>
+                </div>
+            `;
+        }
+        
+        // تخزين username الحالي للاستخدام في الحفظ
+        grid.setAttribute('data-current-user', username);
+    } else {
+        grid.innerHTML = '<p style="color:#c00;">❌ فشل تحميل العناصر</p>';
+    }
+}
+
+let changedPermissions = {};
+
+function markPermissionChanged(username, elementId, isChecked){
+    if(!changedPermissions[username]) changedPermissions[username] = {};
+    changedPermissions[username][elementId] = isChecked;
+}
+
+async function saveAllPermissions(){
+    const username = document.getElementById('permUserSelect').value;
+    if(!username){
+        alert('❌ الرجاء اختيار مراقب أولاً');
+        return;
+    }
+    
+    if(!changedPermissions[username] || Object.keys(changedPermissions[username]).length === 0){
+        alert('⚠️ لا توجد تغييرات لحفظها');
+        return;
+    }
+    
+    const promises = [];
+    for(const [elementId, canAccess] of Object.entries(changedPermissions[username])){
+        promises.push(fetch('/api/admin/set-permission', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username, element_id: elementId, can_access: canAccess ? 1 : 0})
+        }));
+    }
+    
+    const results = await Promise.all(promises);
+    let successCount = results.filter(r => r.ok).length;
+    
+    if(successCount === promises.length){
+        alert(`✅ تم حفظ ${successCount} صلاحية للمراقب ${username}`);
+        delete changedPermissions[username];
+        // إعادة تحميل الصلاحيات للتحديث
+        loadUserElements();
+    } else {
+        alert(`⚠️ تم حفظ ${successCount} من ${promises.length} صلاحية. حاول مرة أخرى.`);
+    }
+}
+function showSection(section, evt){
     document.getElementById('dashboardSection').style.display=section==='dashboard'?'block':'none';
     document.getElementById('evidencesSection').style.display=section==='evidences'?'block':'none';
     document.getElementById('usersSection').style.display=section==='users'?'block':'none';
+    document.getElementById('permissionsSection').style.display=section==='permissions'?'block':'none';
     document.getElementById('syncSection').style.display=section==='sync'?'block':'none';
     document.getElementById('reportsSection').style.display=section==='reports'?'block':'none';
     document.querySelectorAll('.nav-item').forEach(item=>item.classList.remove('active'));
-    if(event && event.target) event.target.classList.add('active');
+    if(evt && evt.target) evt.target.classList.add('active');
     if(section==='users') loadUsers();
+    if(section==='permissions') loadPermissionsUsers();
 }
 async function logout(){
     await fetch('/api/logout',{method:'POST'});
@@ -1903,7 +2181,38 @@ const script=document.createElement('script');script.src='https://cdn.jsdelivr.n
 @app.route('/')
 def index():
     return render_template_string(LOGIN_PAGE)
-
+@app.route('/api/change-password', methods=['POST'])
+def change_password():
+    if 'username' not in session:
+        return jsonify({'success': False, 'error': 'غير مسجل دخول'})
+    
+    data = request.json
+    old_password = data.get('old_password')
+    new_password = data.get('new_password')
+    
+    if not old_password or not new_password:
+        return jsonify({'success': False, 'error': 'الرجاء إدخال كلمة السر الحالية والجديدة'})
+    
+    if len(new_password) < 4:
+        return jsonify({'success': False, 'error': 'كلمة السر الجديدة قصيرة جداً (4 أحرف على الأقل)'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # التحقق من كلمة السر الحالية
+    c.execute("SELECT id FROM users WHERE username=? AND password=?", (session['username'], old_password))
+    user = c.fetchone()
+    
+    if not user:
+        conn.close()
+        return jsonify({'success': False, 'error': 'كلمة السر الحالية غير صحيحة'})
+    
+    # تحديث كلمة السر
+    c.execute("UPDATE users SET password = ? WHERE username = ?", (new_password, session['username']))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'message': 'تم تغيير كلمة السر بنجاح'})
 @app.route('/dashboard')
 def dashboard():
     if 'username' not in session:
