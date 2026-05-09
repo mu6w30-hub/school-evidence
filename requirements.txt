@@ -1,6 +1,7 @@
 flask
 flask-cors
-gunicorn
+python-dotenv
 pillow
 requests
-python-dotenv
+pandas
+openpyxl
