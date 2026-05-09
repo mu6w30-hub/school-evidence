@@ -604,8 +604,8 @@ def init_local_db():
                       (element_id, element_data['title'], witnesses_json, appendix_val, criteria_val, indicators_val))
     # إضافة المستخدمين
     users = [
-        ('admin', '1', 'مدير النظام'),
-        ('adl', '123', 'عادل العيثان'),
+        ('admin', '123', 'مدير النظام'),
+        ('adl', '123', 'المراقب الأول'),
         ('has', '123', 'المراقب الثاني'),
         ('3', '123', 'المراقب الثالث'),
         ('observer4', 'pass123', 'المراقب الرابع'),
