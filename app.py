@@ -3478,13 +3478,28 @@ def save_evidence():
     filename = data.get('filename', f"file_{uuid.uuid4().hex}")
     file_type = data.get('filetype', 'application/octet-stream')
     
-    # تحويل element_id إلى str للوصول إلى ELEMENTS
-    element_id_str = str(element_id)
-    if element_id_str not in ELEMENTS:
+    # جلب بيانات العنصر والشاهد من قاعدة البيانات
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT title, witnesses FROM elements WHERE element_id=?", (str(element_id),))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row:
         return jsonify({'success': False, 'error': 'عنصر غير موجود'})
     
-    witness_text = ELEMENTS[element_id_str]['witnesses'][witness_id - 1]
-    element_title = ELEMENTS[element_id_str]['title']
+    element_title = row[0]
+    try:
+        witnesses = json.loads(row[1]) if row[1] else {}
+        if isinstance(witnesses, dict):
+            witness_text = witnesses.get(str(witness_id), '')
+        else:
+            witness_text = witnesses[witness_id - 1] if len(witnesses) >= witness_id else ''
+    except:
+        witness_text = ''
+    
+    if not witness_text:
+        return jsonify({'success': False, 'error': 'الشاهد غير موجود'})
     
     # استخراج الامتداد من اسم الملف أو من نوع الملف
     if '.' in filename:
