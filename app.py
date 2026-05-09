@@ -10,7 +10,8 @@ from datetime import datetime
 import sqlite3
 import json
 import requests
-
+import pandas as pd
+from flask import send_file
 load_dotenv()
 
 app = Flask(__name__)
@@ -570,16 +571,40 @@ def init_local_db():
                   image_url TEXT,
                   synced INTEGER DEFAULT 0,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    # إضافة جدول صلاحيات المراقبين
+    # إضافة جدول صلاحيات المراقبين (معدل ليشمل witness_id)
     c.execute('''CREATE TABLE IF NOT EXISTS user_permissions
                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT,
                 element_id TEXT,
+                witness_id INTEGER,
                 can_access INTEGER DEFAULT 1,
-                UNIQUE(username, element_id))''')
-    # إضافة 11 مستخدم (مدير + 10 مراقبين)
+                UNIQUE(username, element_id, witness_id))''')
+    # إضافة جدول العناصر
+    c.execute('''CREATE TABLE IF NOT EXISTS elements
+                (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                element_id TEXT UNIQUE,
+                title TEXT,
+                witnesses TEXT,
+                appendix TEXT,
+                criteria TEXT,
+                indicators TEXT)''')
+    
+    # ترحيل البيانات من ELEMENTS الثابتة إلى قاعدة البيانات إذا كان الجدول فارغاً
+    c.execute("SELECT COUNT(*) FROM elements")
+    count = c.fetchone()[0]
+    if count == 0:
+        for element_id, element_data in ELEMENTS.items():
+            witnesses_json = json.dumps(element_data['witnesses'], ensure_ascii=False)
+            # تقسيم element_id إلى أجزاء
+            parts = element_id.split('-')
+            appendix_val = parts[1] if len(parts) > 1 else ''
+            criteria_val = parts[2] if len(parts) > 2 else ''
+            indicators_val = parts[3] if len(parts) > 3 else ''
+            c.execute("INSERT OR IGNORE INTO elements (element_id, title, witnesses, appendix, criteria, indicators) VALUES (?, ?, ?, ?, ?, ?)",
+                      (element_id, element_data['title'], witnesses_json, appendix_val, criteria_val, indicators_val))
+    # إضافة المستخدمين
     users = [
-        ('admin', '1', 'مدير النظام'),
+        ('admin', '123', 'مدير النظام'),
         ('adl', '123', 'المراقب الأول'),
         ('has', '123', 'المراقب الثاني'),
         ('3', '123', 'المراقب الثالث'),
@@ -599,8 +624,79 @@ def init_local_db():
                       (username, password, full_name))
     conn.commit()
     conn.close()
+def migrate_database():
+    """إضافة الأعمدة الجديدة إلى جدول elements إذا لم تكن موجودة"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # التحقق من وجود الأعمدة وإضافتها إذا لم تكن موجودة
+    try:
+        c.execute("ALTER TABLE elements ADD COLUMN appendix TEXT")
+        print("✅ تم إضافة عمود appendix")
+    except sqlite3.OperationalError:
+        print("⚠️ عمود appendix موجود مسبقاً")
+    
+    try:
+        c.execute("ALTER TABLE elements ADD COLUMN criteria TEXT")
+        print("✅ تم إضافة عمود criteria")
+    except sqlite3.OperationalError:
+        print("⚠️ عمود criteria موجود مسبقاً")
+    
+    try:
+        c.execute("ALTER TABLE elements ADD COLUMN indicators TEXT")
+        print("✅ تم إضافة عمود indicators")
+    except sqlite3.OperationalError:
+        print("⚠️ عمود indicators موجود مسبقاً")
+    
+    # تحديث الصفوف القديمة بقيم افتراضية من element_id (فقط إذا كانت القيم فارغة أو أرقاماً)
+    c.execute("SELECT element_id, id, appendix, criteria, indicators FROM elements")
+    rows = c.fetchall()
+    updated_count = 0
+    for row in rows:
+        element_id = row[0]
+        element_id_parts = element_id.split('-')
+        current_appendix = row[2] or ''
+        current_criteria = row[3] or ''
+        current_indicators = row[4] or ''
+        
+        # التحقق مما إذا كانت القيم الحالية هي أرقام (1,2,3...) أو فارغة
+        needs_update = False
+        
+        # إذا كان الملحق فارغاً أو عبارة عن رقم (من element_id)
+        if not current_appendix or (current_appendix.isdigit() and len(current_appendix) == 1):
+            appendix_val = element_id_parts[1] if len(element_id_parts) > 1 else ''
+            needs_update = True
+        else:
+            appendix_val = current_appendix
+            
+        # إذا كانت المعايير فارغة أو عبارة عن رقم (من element_id)
+        if not current_criteria or (current_criteria.isdigit() and len(current_criteria) == 1):
+            criteria_val = element_id_parts[2] if len(element_id_parts) > 2 else ''
+            needs_update = True
+        else:
+            criteria_val = current_criteria
+            
+        # إذا كانت المؤشرات فارغة أو عبارة عن رقم (من element_id)
+        if not current_indicators or (current_indicators.isdigit() and len(current_indicators) == 1):
+            indicators_val = element_id_parts[3] if len(element_id_parts) > 3 else ''
+            needs_update = True
+        else:
+            indicators_val = current_indicators
+        
+        if needs_update:
+            c.execute("UPDATE elements SET appendix=?, criteria=?, indicators=? WHERE id=?",
+                      (appendix_val, criteria_val, indicators_val, row[1]))
+            updated_count += 1
+    
+    print(f"✅ تم تحديث {updated_count} عنصر بقيم appendix, criteria, indicators (مع الحفاظ على النصوص)")
+    
+    conn.commit()
+    conn.close()
+    print(f"✅ تم تحديث {len(rows)} عنصر بقيم appendix, criteria, indicators")
 
+# استدعاء دالة الترحيل بعد إنشاء الجداول
 init_local_db()
+migrate_database()
 
 # ============ دوال Supabase ============
 def upload_to_supabase(image_bytes, filename):
@@ -767,11 +863,11 @@ def admin_get_permissions():
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT username, element_id, can_access FROM user_permissions")
+    c.execute("SELECT username, element_id, witness_id, can_access FROM user_permissions")
     rows = c.fetchall()
     conn.close()
-    
-    permissions = [{'username': r[0], 'element_id': r[1], 'can_access': r[2]} for r in rows]
+
+    permissions = [{'username': r[0], 'element_id': r[1], 'witness_id': r[2], 'can_access': r[3]} for r in rows]
     return jsonify({'success': True, 'data': permissions})
 
 @app.route('/api/admin/set-permission', methods=['POST'])
@@ -782,41 +878,234 @@ def admin_set_permission():
     data = request.json
     username = data.get('username')
     element_id = data.get('element_id')
+    witness_id = data.get('witness_id')  # <-- جديد
     can_access = data.get('can_access', 1)
-    
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''INSERT OR REPLACE INTO user_permissions (username, element_id, can_access)
-                 VALUES (?, ?, ?)''', (username, element_id, can_access))
+    c.execute('''INSERT OR REPLACE INTO user_permissions (username, element_id, witness_id, can_access)
+                 VALUES (?, ?, ?, ?)''', (username, element_id, witness_id, can_access))
     conn.commit()
     conn.close()
-    
+
     return jsonify({'success': True, 'message': 'تم تحديث الصلاحية'})
 
-@app.route('/api/admin/get-user-elements', methods=['GET'])
-def admin_get_user_elements():
+@app.route('/api/admin/get-user-witnesses', methods=['GET'])
+def admin_get_user_witnesses():
     if 'username' not in session or session.get('username') != 'admin':
         return jsonify({'success': False, 'error': 'غير مصرح'})
-    
+
     username = request.args.get('username')
     if not username:
         return jsonify({'success': False, 'error': 'اسم المستخدم مطلوب'})
-    
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT element_id FROM user_permissions WHERE username=? AND can_access=1", (username,))
+    # جلب جميع الصلاحيات (element_id و witness_id) لهذا المستخدم
+    c.execute("SELECT element_id, witness_id FROM user_permissions WHERE username=? AND can_access=1", (username,))
     rows = c.fetchall()
     conn.close()
-    
-    elements = [r[0] for r in rows]
-    return jsonify({'success': True, 'data': elements})
+
+    # تنظيم البيانات على شكل {element_id: [witness_id1, witness_id2]}
+    user_witnesses = {}
+    for element_id, witness_id in rows:
+        if element_id not in user_witnesses:
+            user_witnesses[element_id] = []
+        user_witnesses[element_id].append(witness_id)
+
+    return jsonify({'success': True, 'data': user_witnesses})
 
 @app.route('/api/admin/all-elements', methods=['GET'])
 def admin_all_elements():
     if 'username' not in session or session.get('username') != 'admin':
         return jsonify({'success': False, 'error': 'غير مصرح'})
     
-    return jsonify({'success': True, 'elements': ELEMENTS})
+    # جلب من قاعدة البيانات أولاً
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS elements
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  element_id TEXT UNIQUE,
+                  title TEXT,
+                  witnesses TEXT)''')
+    conn.commit()
+    
+    c.execute("SELECT element_id, title, witnesses, appendix, criteria, indicators FROM elements")
+    rows = c.fetchall()
+    conn.close()
+    
+    if rows:
+        elements = {}
+        for row in rows:
+            try:
+                witnesses = json.loads(row[2]) if row[2] else {}
+            except:
+                witnesses = {}
+            elements[row[0]] = {"title": row[1], "witnesses": witnesses, "appendix": row[3] or '', "criteria": row[4] or '', "indicators": row[5] or ''}
+        return jsonify({'success': True, 'elements': elements})
+    else:
+        # إذا كانت قاعدة البيانات فارغة، استخدم الثوابت القديمة
+        return jsonify({'success': True, 'elements': ELEMENTS})
+
+@app.route('/api/admin/get-all-elements-db', methods=['GET'])
+def admin_get_all_elements_db():
+    """جلب جميع العناصر من قاعدة البيانات (جدول elements)"""
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # إنشاء جدول elements إذا لم يكن موجوداً
+    c.execute('''CREATE TABLE IF NOT EXISTS elements
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  element_id TEXT UNIQUE,
+                  title TEXT,
+                  witnesses TEXT)''')
+    
+    # التحقق من وجود الأعمدة الجديدة وإضافتها إذا لزم الأمر
+    try:
+        c.execute("ALTER TABLE elements ADD COLUMN appendix TEXT")
+    except: pass
+    try:
+        c.execute("ALTER TABLE elements ADD COLUMN criteria TEXT")
+    except: pass
+    try:
+        c.execute("ALTER TABLE elements ADD COLUMN indicators TEXT")
+    except: pass
+    
+    conn.commit()
+    
+    # جلب جميع الأعمدة
+    c.execute("SELECT element_id, title, witnesses, appendix, criteria, indicators FROM elements ORDER BY element_id")
+    rows = c.fetchall()
+    conn.close()
+    
+    data = []
+    for row in rows:
+        try:
+            witnesses = json.loads(row[2]) if row[2] else {}
+        except:
+            witnesses = {}
+        data.append({
+            'element_id': row[0], 
+            'title': row[1], 
+            'witnesses': witnesses, 
+            'appendix': row[3] if row[3] is not None else '', 
+            'criteria': row[4] if row[4] is not None else '', 
+            'indicators': row[5] if row[5] is not None else ''
+        })
+    
+    return jsonify({'success': True, 'data': data})
+
+@app.route('/api/admin/add-element', methods=['POST'])
+def admin_add_element():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    data = request.json
+    element_id = data.get('element_id')
+    title = data.get('title')
+    witnesses = data.get('witnesses', [])
+    
+    if not element_id or not title:
+        return jsonify({'success': False, 'error': 'رقم العنصر والعنوان مطلوبان'})
+    
+    # تقسيم element_id لتحديد الملحق والمعايير والمؤشرات
+    parts = element_id.split('-')
+    appendix = parts[1] if len(parts) > 1 else ''
+    criteria = parts[2] if len(parts) > 2 else ''
+    indicators = parts[3] if len(parts) > 3 else ''
+    
+    # تحويل قائمة الشواهد إلى قاموس مرقم
+    witnesses_dict = {str(i+1): w for i, w in enumerate(witnesses)}
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # التحقق من عدم وجود العنصر
+    c.execute("SELECT element_id FROM elements WHERE element_id=?", (element_id,))
+    if c.fetchone():
+        conn.close()
+        return jsonify({'success': False, 'error': 'رقم العنصر موجود مسبقاً'})
+    
+    try:
+        c.execute("INSERT INTO elements (element_id, title, witnesses, appendix, criteria, indicators) VALUES (?, ?, ?, ?, ?, ?)",
+                  (element_id, title, json.dumps(witnesses_dict, ensure_ascii=False), appendix, criteria, indicators))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'message': 'تم إضافة العنصر'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/admin/update-element', methods=['POST'])
+def admin_update_element():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    data = request.json
+    old_element_id = data.get('old_element_id')
+    new_element_id = data.get('element_id')
+    title = data.get('title')
+    witnesses = data.get('witnesses', [])
+    
+    witnesses_dict = {str(i+1): w for i, w in enumerate(witnesses)}
+    
+    # تقسيم element_id الجديد
+    parts = new_element_id.split('-')
+    appendix = parts[1] if len(parts) > 1 else ''
+    criteria = parts[2] if len(parts) > 2 else ''
+    indicators = parts[3] if len(parts) > 3 else ''
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    try:
+        if old_element_id != new_element_id:
+            # التحقق من عدم وجود الرقم الجديد
+            c.execute("SELECT element_id FROM elements WHERE element_id=?", (new_element_id,))
+            if c.fetchone():
+                conn.close()
+                return jsonify({'success': False, 'error': 'رقم العنصر الجديد موجود مسبقاً'})
+            # تحديث في جدول evidences أيضاً
+            c.execute("UPDATE evidences SET element_id=? WHERE element_id=?", (new_element_id, old_element_id))
+            c.execute("UPDATE user_permissions SET element_id=? WHERE element_id=?", (new_element_id, old_element_id))
+        
+        c.execute("UPDATE elements SET element_id=?, title=?, witnesses=?, appendix=?, criteria=?, indicators=? WHERE element_id=?",
+                  (new_element_id, title, json.dumps(witnesses_dict, ensure_ascii=False), appendix, criteria, indicators, old_element_id))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'message': 'تم تحديث العنصر'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/admin/delete-element', methods=['POST'])
+def admin_delete_element():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    data = request.json
+    element_id = data.get('element_id')
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    try:
+        # حذف التوثيقات المرتبطة
+        c.execute("DELETE FROM evidences WHERE element_id=?", (element_id,))
+        # حذف صلاحيات المرتبطة
+        c.execute("DELETE FROM user_permissions WHERE element_id=?", (element_id,))
+        # حذف العنصر
+        c.execute("DELETE FROM elements WHERE element_id=?", (element_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'message': 'تم حذف العنصر'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/get-my-elements', methods=['GET'])
 def get_my_elements():
     if 'username' not in session:
@@ -824,17 +1113,20 @@ def get_my_elements():
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT element_id FROM user_permissions WHERE username=? AND can_access=1", (session['username'],))
+    # جلب جميع الصلاحيات لهذا المستخدم (عنصر + شاهد)
+    c.execute("SELECT element_id, witness_id FROM user_permissions WHERE username=? AND can_access=1", (session['username'],))
     rows = c.fetchall()
     conn.close()
-    
-    allowed_elements = [r[0] for r in rows]
-    
-    # إذا لم تكن هناك صلاحيات محددة، أعطِ جميع العناصر
-    if not allowed_elements:
-        allowed_elements = list(ELEMENTS.keys())
-    
-    return jsonify({'success': True, 'data': allowed_elements})
+
+    # تنظيم البيانات لإرسالها للمراقب
+    allowed_witnesses = {}
+    for element_id, witness_id in rows:
+        if element_id not in allowed_witnesses:
+            allowed_witnesses[element_id] = []
+        allowed_witnesses[element_id].append(witness_id)
+
+    # إذا لم تكن هناك صلاحيات محددة، نرسل قاموساً فارغاً ولن يرى أي شيء
+    return jsonify({'success': True, 'data': allowed_witnesses})
 
 @app.route('/api/get-file-preview', methods=['GET'])
 def get_file_preview_api():
@@ -956,23 +1248,40 @@ let allowedElements = [];
 async function loadAllowedElements() {
     const response = await fetch('/api/get-my-elements');
     const data = await response.json();
+    let allowedWitnessesMap = {}; // { element_id: [1,2,3] }
+
     if (data.success) {
-        allowedElements = data.data;
-        // تصفية العناصر المسموحة فقط
+        allowedWitnessesMap = data.data;
+        // تصفية وعرض العناصر والشواهد المسموحة فقط
         const allElements = {{ elements | tojson }};
         elements = {};
-        for (const [id, element] of Object.entries(allElements)) {
-            if (allowedElements.includes(id)) {
-                elements[id] = element;
+        for (const [elementId, elementData] of Object.entries(allElements)) {
+            // التحقق مما إذا كان المستخدم لديه أي صلاحية على هذا العنصر
+            if (allowedWitnessesMap[elementId] && allowedWitnessesMap[elementId].length > 0) {
+                // نسخ العنصر ولكن فقط الشواهد المسموحة
+                elements[elementId] = {
+                    title: elementData.title,
+                    witnesses: [] // سنعبئها بالشواهد المسموحة فقط
+                };
+                // تصفية الشواهد حسب المسموح
+                const allWitnesses = elementData.witnesses;
+                const allowedWitnessIds = allowedWitnessesMap[elementId];
+                for (let i = 0; i < allWitnesses.length; i++) {
+                    if (allowedWitnessIds.includes(i + 1)) {
+                        elements[elementId].witnesses.push(allWitnesses[i]);
+                    }
+                }
             }
         }
         displayElements();
     } else {
-        // في حالة الخطأ، عرض جميع العناصر
-        elements = {{ elements | tojson }};
+        // في حالة الخطأ، عرض جميع العناصر (للتوافق القديم أو عرض رسالة خطأ)
+        console.error("فشل في تحميل الصلاحيات");
+        elements = {}; // لا نعرض أي شيء
         displayElements();
     }
 }
+
 let currentElementId=null,currentWitnessId=null,stream=null;
 let currentFacingMode = 'environment';
 function showSection(section){
@@ -989,11 +1298,18 @@ function displayElements(){
         card.innerHTML=`<div class="element-title">📚 العنصر ${id}: ${element.title}</div><div class="witnesses-list" id="witnesses-${id}"></div>`;
         grid.appendChild(card);
         const list=document.getElementById(`witnesses-${id}`);
-        element.witnesses.forEach((text,idx)=>{
-            const div=document.createElement('div');div.className='witness-item';
-            div.innerHTML=`<span class="witness-text" style="cursor:pointer; flex:1;" onclick="showWitnessEvidences('${id}',${idx+1},'${text.replace(/'/g, "\\'")}')">${idx+1}. ${text}</span><span class="camera-icon" onclick="openCamera('${id}',${idx+1})">📷</span>`;
-            list.appendChild(div);
-        });
+        // عرض الشواهد تحت المؤشر
+        if(element.witnesses && element.witnesses.length > 0){
+            element.witnesses.forEach((text, idx) => {
+                const div = document.createElement('div');
+                div.className = 'witness-item';
+                div.innerHTML = `<span class="witness-text" style="cursor:pointer; flex:1;" onclick="showWitnessEvidences('${id}',${idx+1},'${text.replace(/'/g, "\\'")}')">📌 ${idx+1}. ${text}</span>
+                                <span class="camera-icon" onclick="openCamera('${id}',${idx+1})">📷</span>`;
+                list.appendChild(div);
+            });
+        } else {
+            list.innerHTML = '<div style="padding:15px; text-align:center; color:#999;">📭 لا توجد شواهد لهذا المؤشر</div>';
+        }
     }
 }
 async function openCamera(elementId,witnessId){
@@ -1400,6 +1716,7 @@ ${item.file_type && item.file_type.startsWith('image/') ?
         }).join('');
     }else{grid.innerHTML='<p style="text-align:center; padding:20px;">📭 لا توجد توثيقات سابقة</p>';}
 }
+
 async function logout(){
     if(confirm('هل أنت متأكد من تسجيل الخروج؟')){
         await fetch('/api/logout',{method:'POST'});
@@ -1660,7 +1977,23 @@ ADMIN_PAGE = '''
 <!DOCTYPE html>
 <html dir="rtl">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>لوحة المدير - نظام توثيق الشواهد</title>
+
+
 <style>
+#elementsPermissionsGrid{width:100%; max-height:500px; overflow-x:auto; overflow-y:auto; background:#f8f9fa; border-radius:15px; display:block;}
+#elementsPermissionsGrid table{min-width:1200px; width:100%; border-collapse:collapse;}
+#elementsPermissionsGrid th{background:#f8f9fa; padding:12px; text-align:right; border-bottom:1px solid #ddd;}
+#elementsPermissionsGrid td{padding:12px; text-align:right; border-bottom:1px solid #eee;}
+#elementsPermissionsGrid th:first-child, #elementsPermissionsGrid td:first-child{position:sticky; right:0; background:#f8f9fa; z-index:1;}
+#elementsPermissionsGrid th:nth-child(1){width:30px;}
+#elementsPermissionsGrid th:nth-child(2){width:50px;}
+#elementsPermissionsGrid th:nth-child(3){min-width:100px;}
+#elementsPermissionsGrid th:nth-child(4){min-width:100px;}
+#elementsPermissionsGrid th:nth-child(5){min-width:150px;}
+#elementsPermissionsGrid th:nth-child(6){min-width:200px; white-space:normal;}
+#elementsPermissionsGrid th:nth-child(7){min-width:350px; white-space:normal;}
+#elementsPermissionsGrid td:nth-child(6){min-width:200px; white-space:normal; word-break:break-word;}
+#elementsPermissionsGrid td:nth-child(7){min-width:350px; white-space:normal; word-break:break-word; line-height:1.6;}
 *{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',sans-serif;background:#f0f2f5}
 .sidebar{position:fixed;right:0;top:0;width:280px;height:100%;background:linear-gradient(180deg,#1a2a6c,#b21f1f);color:white;padding:20px;overflow-y:auto}
 .sidebar h3{text-align:center;margin-bottom:30px;padding-bottom:15px;border-bottom:2px solid rgba(255,255,255,0.3)}
@@ -1678,9 +2011,15 @@ ADMIN_PAGE = '''
 .btn-danger{background:#dc3545;color:white}
 .btn-warning{background:#ffc107;color:#333}
 .btn-info{background:#17a2b8;color:white}
-table{width:100%;background:white;border-radius:15px;overflow:hidden}
-th,td{padding:12px;text-align:right;border-bottom:1px solid #eee}
+table{width:100%;background:white;border-radius:15px;overflow-x:auto;display:block}
+th,td{padding:12px;text-align:right;border-bottom:1px solid #eee;white-space:nowrap}
 th{background:#f8f9fa}
+th:nth-child(6){min-width:200px;white-space:normal}
+td:nth-child(6){min-width:200px;white-space:normal;word-break:break-word}
+th:nth-child(3),td:nth-child(3){min-width:100px}
+th:nth-child(7){min-width:300px;white-space:normal}
+td:nth-child(7){min-width:300px;white-space:normal;word-break:break-word;line-height:1.6}
+th:nth-child(8),td:nth-child(8){position:sticky;right:0;background:white;box-shadow:-2px 0 5px rgba(0,0,0,0.1)}
 .evidence-img{width:50px;height:50px;object-fit:cover;border-radius:8px;cursor:pointer}
 .logout-btn{background:rgba(255,255,255,0.2);border:none;color:white;padding:10px;border-radius:8px;cursor:pointer;width:100%;margin-top:20px}
 .sync-status{background:#e9ecef;padding:10px;border-radius:8px;margin-bottom:20px;display:none}
@@ -1705,7 +2044,116 @@ th{background:#f8f9fa}
     .sidebar{position:fixed;right:0;top:0;width:220px;height:100%;z-index:200;background:linear-gradient(180deg,#1a2a6c,#b21f1f);overflow-y:auto}
     .main-content{margin-right:0 !important}
 }
+/* تخصيص عرض أعمدة جدول صلاحيات الشواهد */
+#permissionsTableBody td:nth-child(2),
+#permissionsTableBody td:nth-child(3),
+#permissionsTableBody td:nth-child(4) {
+    white-space: normal !important;
+    word-break: break-word !important;
+    word-wrap: break-word !important;
+}
+
+#permissionsTableBody td:nth-child(2) { /* عمود ملحق */
+    min-width: 50px !important;
+    max-width: 70px !important;
+}
+
+#permissionsTableBody td:nth-child(3) { /* عمود المعايير */
+    min-width: 60px !important;
+    max-width: 90px !important;
+}
+
+#permissionsTableBody td:nth-child(4) { /* عمود المؤشرات */
+    min-width: 100px !important;
+    max-width: 150px !important;
+}
+
+#permissionsTableBody td:nth-child(2) { /* عمود ملحق */
+    min-width: 50px !important;
+    max-width: 70px !important;
+}
+
+#permissionsTableBody td:nth-child(3) { /* عمود المعايير */
+    min-width: 60px !important;
+    max-width: 90px !important;
+}
+
+#permissionsTableBody td:nth-child(4) { /* عمود المؤشرات */
+    min-width: 100px !important;
+    max-width: 150px !important;
+}
+
+#permissionsTableBody td:first-child { /* عمود العنصر */
+    min-width: 120px !important;
+}
+
+#permissionsTableBody td:last-child { /* عمود صلاحيات الشواهد */
+    white-space: normal !important;
+    word-break: break-word !important;
+    word-wrap: break-word !important;
+    max-width: 400px !important;
+}
+
+/* تحسين رأس الجدول */
+#elementsPermissionsGrid th:nth-child(2),
+#elementsPermissionsGrid th:nth-child(3),
+#elementsPermissionsGrid th:nth-child(4) {
+    white-space: nowrap !important;
+}
+/* منع تداخل النصوص في جدول صلاحيات الشواهد */
+#permissionsTableBody {
+    display: table;
+    width: 100%;
+}
+
+#permissionsTableBody td {
+    word-wrap: break-word !important;
+    word-break: break-word !important;
+    white-space: normal !important;
+}
+
+/* عمود صلاحيات الشواهد - يسمح بالتفاف النص */
+#permissionsTableBody td:last-child {
+    white-space: normal !important;
+    word-break: break-word !important;
+    word-wrap: break-word !important;
+    max-width: 400px !important;
+}
+
+/* الأعمدة الصغيرة تبقى في سطر واحد لكن بدون إخفاء النص */
+#permissionsTableBody td:nth-child(2),
+#permissionsTableBody td:nth-child(3),
+#permissionsTableBody td:nth-child(4) {
+    white-space: normal !important;
+    word-break: break-word !important;
+}
+
+/* تحسين مظهر التسميات داخل عمود الشواهد */
+#permissionsTableBody td:last-child label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+#permissionsTableBody td:last-child label span {
+    flex: 1;
+    word-break: break-word;
+    line-height: 1.5;
+}
+/* السماح للصفوف بزيادة ارتفاعها حسب المحتوى */
+#permissionsTableBody tr {
+    height: auto !important;
+}
+
+#permissionsTableBody td {
+    height: auto !important;
+    padding: 12px !important;
+    vertical-align: top !important;
+}
+
 </style>
+
 </head>
 <body>
 <div class="sidebar" id="sidebar" style="display:none;"><h3>👑 لوحة المدير المتقدمة</h3>
@@ -1714,6 +2162,8 @@ th{background:#f8f9fa}
 <div class="nav-item" onclick="showSection('users', event);toggleSidebar()">👥 إدارة المستخدمين</div>
 <div class="nav-item" onclick="showSection('permissions', event);toggleSidebar()">🔐 صلاحيات العناصر</div>
 <div class="nav-item" onclick="showSection('sync', event);toggleSidebar()">🔄 المزامنة</div>
+
+<div class="nav-item" onclick="showSection('elementsManagement', event);toggleSidebar()">📚 إدارة العناصر</div>
 <div class="nav-item" onclick="showSection('reports', event);toggleSidebar()">📈 التقارير والإحصائيات</div>
 <button class="logout-btn" onclick="logout()">🚪 خروج</button></div>
 <div class="main-content">
@@ -1735,26 +2185,27 @@ th{background:#f8f9fa}
 <div id="evidencesSection" style="display:none;">
 <div style="background:white; border-radius:15px; padding:20px;">
 <div class="filter-bar"><input type="text" id="searchInput" class="search-box" placeholder="🔍 بحث في التوثيقات..."><select id="filterUser"><option value="">جميع المراقبين</option></select><select id="filterElement"><option value="">جميع العناصر</option></select><input type="date" id="filterDate"></div>
-<div class="action-buttons"><button class="btn btn-primary" onclick="exportCSV()">📥 تصدير CSV</button><button class="btn btn-success" onclick="exportExcel()">📊 تصدير Excel</button><button class="btn btn-info" onclick="refreshData()">🔄 تحديث</button><button class="btn btn-danger" onclick="deleteSelected()">🗑️ حذف المحدد</button></div>
+<div class="action-buttons"><button class="btn btn-primary" onclick="exportCSV()">📥 تصدير CSV</button><button class="btn btn-success" onclick="exportExcel()">📊 تصدير Excel</button><button class="btn btn-warning" onclick="exportAllToExcel()">💾 تصدير كل الجداول إلى Excel</button><button class="btn btn-info" onclick="showImportModal()">📂 استيراد من Excel</button><button class="btn btn-info" onclick="refreshData()">🔄 تحديث</button><button class="btn btn-danger" onclick="deleteSelected()">🗑️ حذف المحدد</button></div>
 <div style="overflow-x:auto;"><table id="dataTable"><thead><tr><th><input type="checkbox" id="selectAll"></th><th>#</th><th>المراقب</th><th>العنصر</th><th>الشاهد</th><th>الصورة</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody id="tableBody"></tbody></table></div>
 <div class="pagination" id="pagination"></div>
 </div></div>
 
 <!-- Users Section -->
 <div id="usersSection" style="display:none;">
-<div class="action-buttons"><button class="btn btn-success" onclick="showAddUserModal()">➕ إضافة مستخدم جديد</button><button class="btn btn-primary" onclick="loadUsers()">🔄 تحديث القائمة</button></div>
+<div class="action-buttons"><button class="btn btn-success" onclick="showAddUserModal()">➕ إضافة مستخدم جديد</button><button class="btn btn-warning" onclick="exportUsersToExcel()">📊 تصدير المستخدمين إلى Excel</button><button class="btn btn-primary" onclick="importUsersFromExcel()">📂 استيراد مستخدمين من Excel</button><button class="btn btn-info" onclick="loadUsers()">🔄 تحديث القائمة</button><button class="btn btn-secondary" onclick="toggleSelectAllUsers()" style="background:#6c757d; color:white;">✅ تحديد الكل</button><button class="btn btn-danger" onclick="deleteSelectedUsers()" style="background:#dc3545; color:white;">🗑️ حذف المحدد</button></div>
 <div style="overflow-x:auto; margin-top:20px;">
 <table style="width:100%; background:white; border-radius:15px; overflow:hidden;">
 <thead>
-<tr>
-<th style="padding:12px; text-align:right;">#</th>
-<th style="padding:12px; text-align:right;">اسم المستخدم</th>
-<th style="padding:12px; text-align:right;">الاسم الكامل</th>
-<th style="padding:12px; text-align:right;">النوع</th>
-<th style="padding:12px; text-align:right;">عدد التوثيقات</th>
-<th style="padding:12px; text-align:right;">آخر نشاط</th>
-<th style="padding:12px; text-align:right;">الإجراءات</th>
-</tr>
+    <tr>
+        <th style="padding:12px; width:30px;"><input type="checkbox" id="selectAllUsersCheckbox" onchange="toggleSelectAllUsers()"></th>
+        <th style="padding:12px;">#</th>
+        <th style="padding:12px;">اسم المستخدم</th>
+        <th style="padding:12px;">الاسم الكامل</th>
+        <th style="padding:12px;">النوع</th>
+        <th style="padding:12px;">عدد التوثيقات</th>
+        <th style="padding:12px;">آخر نشاط</th>
+        <th style="padding:12px;">الإجراءات</th>
+    </tr>
 </thead>
 <tbody id="usersTableBody"></tbody>
 </table>
@@ -1775,17 +2226,64 @@ th{background:#f8f9fa}
 <div style="background:white; border-radius:15px; padding:20px;">
     <h3>🔐 إدارة صلاحيات العناصر للمراقبين</h3>
     <div class="filter-bar" style="margin-top:15px;">
-        <select id="permUserSelect" onchange="loadUserElements()">
+        <select id="permUserSelect" onchange="loadUserWitnesses()">
             <option value="">--- اختر المراقب ---</option>
         </select>
         <button class="btn btn-primary" onclick="loadUserElements()">📋 عرض العناصر المسموحة</button>
         <button class="btn btn-success" onclick="saveAllPermissions()">💾 حفظ جميع الصلاحيات</button>
     </div>
-    <div id="elementsPermissionsGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:10px; margin-top:20px; max-height:500px; overflow-y:auto; padding:10px; background:#f8f9fa; border-radius:15px;">
-    </div>
+    <div style="margin-bottom:10px;">
+    <label style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="selectAllPermissionsCheckbox" onchange="toggleSelectAllPermissions()">
+        <span>✅ تحديد جميع الصلاحيات</span>
+    </label>
+</div>
+<div id="elementsPermissionsGrid" style="display:block; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:10px; max-height:500px; overflow-y:auto; padding:10px; background:#f8f9fa; border-radius:15px;">
+</div>
+<div class="action-buttons" style="margin-top:10px;">
+    <button class="btn btn-danger" onclick="deleteSelectedPermissions()" style="background:#dc3545; color:white;">🗑️ حذف الصلاحيات المحددة</button>
+</div>
     <div id="permMessage" style="margin-top:15px; padding:10px; border-radius:8px; display:none;"></div>
 </div>
 </div>
+<!-- Elements Management Section -->
+<div id="elementsManagementSection" style="display:none;">
+<div style="background:white; border-radius:15px; padding:20px;">
+    <h3>📚 إدارة العناصر والشواهد</h3>
+    <div class="action-buttons" style="margin-bottom:15px;">
+        <button class="btn btn-success" onclick="showAddElementModal()">➕ إضافة عنصر جديد</button>
+        <button class="btn btn-warning" onclick="exportElementsToExcel()">📊 تصدير العناصر إلى Excel</button>
+        <button class="btn btn-primary" onclick="importElementsFromExcel()">📂 استيراد عناصر من Excel</button>
+        <button class="btn btn-info" onclick="loadElementsList()">🔄 تحديث القائمة</button>
+        <button class="btn btn-secondary" onclick="toggleSelectAllElements()" style="background:#6c757d; color:white;">✅ تحديد الكل</button>
+        <button class="btn btn-danger" onclick="deleteSelectedElements()" style="background:#dc3545; color:white;">🗑️ حذف المحدد</button>
+    </div>
+    <div style="overflow-x:auto;">
+        <table style="width:100%; background:white; border-radius:15px; overflow:hidden;">
+            <thead id="elementsTableHeader">
+                <tr>
+                    <th style="padding:12px; width:30px;"><input type="checkbox" id="selectAllElementsCheckbox" onchange="toggleSelectAllElements()"></th>
+                    <th style="padding:12px;">#</th>
+                    <th style="padding:12px;">الرمز</th>
+                    <th style="padding:12px;">ملحق</th>
+                    <th style="padding:12px;">المعايير</th>
+                    <th style="padding:12px;">المؤشرات</th>
+                    <th style="padding:12px;">الشواهد</th>
+                    <th style="padding:12px;">الإجراءات</th>
+                </tr>
+            </thead>
+            <tbody id="elementsListTableBody">
+                <tr><td colspan="5" style="text-align:center;">جاري التحميل...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+</div>
+
+<!-- Modals for Elements Management -->
+<div id="addElementModal" class="modal"><div class="modal-content" style="max-width:700px;"><h3>➕ إضافة عنصر جديد</h3><div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;"><input type="text" id="newElementId" placeholder="الرمز (مثال: 1-1-1-1)" style="width:100%; padding:10px;"><input type="text" id="newAppendix" placeholder="ملحق" style="width:100%; padding:10px;"><input type="text" id="newCriteria" placeholder="المعايير" style="width:100%; padding:10px;"><input type="text" id="newIndicators" placeholder="المؤشرات" style="width:100%; padding:10px;"></div><h4>📝 قائمة الشواهد</h4><div id="newWitnessesList" style="max-height:300px; overflow-y:auto; border:1px solid #ddd; border-radius:8px; padding:10px; margin:10px 0;"><div style="display:flex; gap:5px; margin-bottom:5px;"><input type="text" placeholder="نص الشاهد" style="flex:1;"><button class="btn btn-danger" onclick="this.parentElement.remove()" style="padding:5px 10px;">✖</button></div></div><button class="btn btn-info" onclick="addWitnessField('newWitnessesList')" style="margin:10px 0;">➕ إضافة شاهد</button><div class="modal-buttons"><button class="btn btn-success" onclick="addElement()">إضافة</button><button class="btn btn-danger" onclick="closeAddElementModal()">إلغاء</button></div></div></div>
+
+<div id="editElementModal" class="modal"><div class="modal-content" style="max-width:900px; width:95%;"><h3>✏️ تعديل عنصر</h3><input type="hidden" id="editElementIdOrig"><div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;"><input type="text" id="editElementId" placeholder="الرمز (مثال: 1-1-1-1)" style="width:100%; padding:10px;"><input type="text" id="editAppendix" placeholder="ملحق" style="width:100%; padding:10px;"><input type="text" id="editCriteria" placeholder="المعايير" style="width:100%; padding:10px;"><input type="text" id="editIndicators" placeholder="المؤشرات" style="width:100%; padding:10px;"></div><h4>📝 قائمة الشواهد</h4><div id="editWitnessesList" style="max-height:300px; overflow-y:auto; border:1px solid #ddd; border-radius:8px; padding:10px; margin:10px 0;"></div><button class="btn btn-info" onclick="addWitnessField('editWitnessesList')" style="margin:10px 0;">➕ إضافة شاهد</button><div class="modal-buttons"><button class="btn btn-primary" onclick="updateElement()">حفظ التعديلات</button><button class="btn btn-danger" onclick="closeEditElementModal()">إلغاء</button></div></div></div>
 
 <!-- Reports Section -->
 <div id="reportsSection" style="display:none;">
@@ -1799,8 +2297,9 @@ th{background:#f8f9fa}
 <!-- Modals -->
 <div id="addUserModal" class="modal"><div class="modal-content"><h3>➕ إضافة مستخدم جديد</h3><input type="text" id="newUsername" placeholder="اسم المستخدم" required><input type="text" id="newFullName" placeholder="الاسم الكامل"><input type="password" id="newPassword" placeholder="كلمة السر" value="pass123"><div class="modal-buttons"><button class="btn btn-success" onclick="addUser()">إضافة</button><button class="btn btn-danger" onclick="closeAddUserModal()">إلغاء</button></div></div></div>
 <div id="editUserModal" class="modal"><div class="modal-content"><h3>✏️ تعديل مستخدم</h3><input type="hidden" id="editUserId"><input type="text" id="editUsername" placeholder="اسم المستخدم"><input type="text" id="editFullName" placeholder="الاسم الكامل"><input type="password" id="editPassword" placeholder="كلمة سر جديدة"><div class="modal-buttons"><button class="btn btn-primary" onclick="updateUser()">حفظ</button><button class="btn btn-danger" onclick="closeEditUserModal()">إلغاء</button></div></div></div>
-<div id="viewImageModal" class="modal"><div class="modal-content" style="max-width:700px;"><img id="modalImage" style="width:100%; border-radius:10px;"><div class="modal-buttons"><button class="btn btn-danger" onclick="closeImageModal()">إغلاق</button></div></div></div>
 
+<div id="viewImageModal" class="modal"><div class="modal-content" style="max-width:700px;"><img id="modalImage" style="width:100%; border-radius:10px;"><div class="modal-buttons"><button class="btn btn-danger" onclick="closeImageModal()">إغلاق</button></div></div></div>
+<div id="importModal" class="modal"><div class="modal-content" style="max-width:500px;"><h3>📂 استيراد بيانات من Excel</h3><p style="margin:10px 0;">اختر ملف Excel (.xlsx, .xls) للاستيراد</p><input type="file" id="importFile" accept=".xlsx,.xls" style="width:100%; padding:10px; margin:10px 0;"><div class="modal-buttons"><button class="btn btn-success" onclick="importExcelFile()">استيراد</button><button class="btn btn-danger" onclick="closeImportModal()">إلغاء</button></div><div id="importProgress" style="margin-top:15px; display:none;"><div style="background:#28a745; height:5px; width:0%; border-radius:5px;"></div><p id="importStatus"></p></div></div></div>
 <script>
 let allData=[], filteredData=[], currentPage=1, rowsPerPage=20, activityChart=null, userChart=null;
 let syncLogs = [];
@@ -1907,14 +2406,15 @@ async function loadUsers(){
             if(data.data && data.data.length > 0){
                 tbody.innerHTML = data.data.map((user, i) => `
                     <tr>
+                        <td style="text-align:center;"><input type="checkbox" class="userCheckbox" value="${user.id}" data-username="${user.username}"></td>
                         <td>${i+1}</td>
                         <td>${user.username || '-'}</td>
                         <td>${user.full_name || '-'}</td>
                         <td>${user.username === 'admin' ? 'مدير' : 'مراقب'}</td>
                         <td>${userStats[user.username] || 0}</td>
                         <td>${lastActivity[user.username] ? lastActivity[user.username].substring(0,10) : '-'}</td>
-                        <td>${user.username !== 'admin' ? `<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name || ''}')" style="margin-left:5px;">✏️</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑</button>` : 'لا يمكن تعديل'}</td>
-                    </tr>
+                        <td>${user.username !== 'admin' ? `<button class="btn btn-warning" onclick="showEditUserModal(${user.id},'${user.username}','${user.full_name || ''}')" style="margin-left:5px;">✏️</button><button class="btn btn-danger" onclick="deleteUser(${user.id},'${user.username}')">🗑️</button><button class="btn btn-info" onclick="resetPassword(${user.id})">🔑</button>` : 'لا يمكن تعديل'}<td>
+                    </table>
                 `).join('');
             } else {
                 tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">لا يوجد مستخدمين</td></tr>';
@@ -2050,10 +2550,11 @@ async function loadPermissionsUsers(){
     }
     // تنظيف الـ grid عند التبديل بين المستخدمين
     document.getElementById('elementsPermissionsGrid').innerHTML = '';
+    changedWitnessPermissions = {};
     changedPermissions = {};
 }
 
-async function loadUserElements(){
+async function loadUserWitnesses() {
     const username = document.getElementById('permUserSelect').value;
     if(!username){
         document.getElementById('permMessage').innerHTML = '<div style="color:#c00;">❌ الرجاء اختيار مراقب</div>';
@@ -2061,82 +2562,143 @@ async function loadUserElements(){
         setTimeout(()=>document.getElementById('permMessage').style.display='none',2000);
         return;
     }
-    
-    // جلب الصلاحيات الحالية للمستخدم
-    const permResponse = await fetch(`/api/admin/get-user-elements?username=${encodeURIComponent(username)}`);
+
+    // جلب الصلاحيات الحالية للمستخدم (العناصر + الشواهد المسموحة)
+    const permResponse = await fetch(`/api/admin/get-user-witnesses?username=${encodeURIComponent(username)}`);
     const permData = await permResponse.json();
-    const allowedElements = permData.success ? permData.data : [];
-    
-    // جلب جميع العناصر من الخادم (API جديد)
-    const elementsResponse = await fetch('/api/admin/all-elements');
+    const allowedWitnesses = permData.success ? permData.data : {}; // هيكل البيانات: { element_id: [1,2,3] }
+
+    // جلب جميع العناصر من قاعدة البيانات بتفاصيلها الكاملة
+    const elementsResponse = await fetch('/api/admin/get-all-elements-db');
     const elementsData = await elementsResponse.json();
-    
-    if(elementsData.success){
+
+    if(elementsData.success && elementsData.data){
         const grid = document.getElementById('elementsPermissionsGrid');
-        grid.innerHTML = `<div style="grid-column:1/-1; background:#e9ecef; padding:10px; border-radius:10px; margin-bottom:10px;">
-                            <strong>👤 المراقب: ${username}</strong>
-                            <span style="margin-right:20px;">✅ اختر العناصر المسموح له بتوثيقها</span>
+        grid.innerHTML = `<div style="background:#e9ecef; padding:10px; border-radius:10px; margin-bottom:10px;">
+                            <strong>👤 المراقب: ${escapeHtml(username)}</strong> - صلاحيات الشواهد
                          </div>`;
-        
-        for(const [id, element] of Object.entries(elementsData.elements)){
-            const isChecked = allowedElements.includes(id);
-            grid.innerHTML += `
-                <div style="background:white; border-radius:10px; padding:12px; box-shadow:0 1px 3px rgba(0,0,0,0.1); display:flex; align-items:center; gap:10px;">
-                    <input type="checkbox" id="perm_${id.replace(/[^a-zA-Z0-9]/g,'_')}" value="${id}" ${isChecked ? 'checked' : ''} 
-                           onchange="markPermissionChanged('${username}','${id.replace(/'/g, "\\'")}',this.checked)">
-                    <label style="flex:1; cursor:pointer;" for="perm_${id.replace(/[^a-zA-Z0-9]/g,'_')}">
-                        <strong>📌 ${id}</strong> - ${element.title.substring(0,60)}
-                    </label>
-                </div>
-            `;
+
+        // عرض العناصر والشواهد في جدول
+        grid.innerHTML += `
+            <div style="overflow-x:auto; width:100%; max-width:100%;">
+                <table style="width:100%; min-width:1000px; background:white; border-radius:15px; border-collapse:collapse; table-layout:auto;">
+                    <thead>
+                        <tr>
+                            <th style="padding:12px; width:15%;">العنصر (الرمز)</th>
+                            <th style="padding:12px; width:8%; text-align:center;">ملحق</th>
+                            <th style="padding:12px; width:10%; text-align:center;">المعايير</th>
+                            <th style="padding:12px; width:12%;">المؤشرات</th>
+                            <th style="padding:12px; width:55%;">صلاحيات الشواهد</th>
+                        </tr>
+                    </thead>
+                    <tbody id="permissionsTableBody"></tbody>
+                </table>
+            </div>
+        `;
+
+        const tbody = document.getElementById('permissionsTableBody');
+        tbody.innerHTML = '';
+        for (const el of elementsData.data) {
+            const elementId = el.element_id;
+            const indicators = el.indicators || '';
+            const allowedForElement = allowedWitnesses[elementId] || [];
+
+            // بناء خلايا الشواهد
+            let witnessesHtml = '';
+            if(el.witnesses){
+                const witnessList = Object.values(el.witnesses);
+                witnessList.forEach((witnessText, idx) => {
+                    const witnessIndex = idx + 1;
+                    const isChecked = allowedForElement.includes(witnessIndex);
+                    witnessesHtml += `<div style="margin-bottom:5px;">
+                                        <label style="display:flex; align-items:center; gap:8px;">
+                                            <input type="checkbox" class="witness-perm-checkbox" data-element-id="${escapeHtml(elementId)}" data-witness-id="${witnessIndex}" ${isChecked ? 'checked' : ''} onchange="markWitnessPermissionChanged('${escapeHtml(username)}', '${escapeHtml(elementId)}', ${witnessIndex}, this.checked)">
+                                            <span><strong>${witnessIndex}:</strong> ${escapeHtml(witnessText)}</span>
+                                        </label>
+                                      </div>`;
+                });
+            }
+            if(!witnessesHtml) witnessesHtml = '<span style="color:#999;">لا توجد شواهد</span>';
+
+            const row = `<tr>
+                            <td style="padding:12px;width:20px; text-align:center; vertical-align:top;"><strong>${escapeHtml(elementId)}</strong></td>
+                            <td style="padding:12px; width:250px; text-align:center; vertical-align:top;">${escapeHtml(el.appendix || '')}</td>
+                            <td style="padding:12px; width:200px; text-align:center; vertical-align:top;">${escapeHtml(el.criteria || '')}</td>
+                            <td style="padding:12px; width:250px; vertical-align:top;">${escapeHtml(indicators)}</td>
+                            <td style="padding:12px; vertical-align:top;">${witnessesHtml}</td>
+                         </td>`;
+            tbody.innerHTML += row;
         }
-        
         // تخزين username الحالي للاستخدام في الحفظ
         grid.setAttribute('data-current-user', username);
+        // reset changed permissions tracker
+        changedWitnessPermissions = {};
     } else {
         grid.innerHTML = '<p style="color:#c00;">❌ فشل تحميل العناصر</p>';
     }
 }
 
 let changedPermissions = {};
-
+let changedWitnessPermissions = {}; // لتتبع تغييرات صلاحيات الشواهد
 function markPermissionChanged(username, elementId, isChecked){
     if(!changedPermissions[username]) changedPermissions[username] = {};
     changedPermissions[username][elementId] = isChecked;
 }
-
-async function saveAllPermissions(){
+function markWitnessPermissionChanged(username, elementId, witnessId, isChecked) {
+    if(!changedWitnessPermissions[username]) changedWitnessPermissions[username] = {};
+    if(!changedWitnessPermissions[username][elementId]) changedWitnessPermissions[username][elementId] = {};
+    changedWitnessPermissions[username][elementId][witnessId] = isChecked;
+}
+async function saveAllPermissions() {
     const username = document.getElementById('permUserSelect').value;
     if(!username){
         alert('❌ الرجاء اختيار مراقب أولاً');
         return;
     }
-    
-    if(!changedPermissions[username] || Object.keys(changedPermissions[username]).length === 0){
+
+    if(!changedWitnessPermissions[username] || Object.keys(changedWitnessPermissions[username]).length === 0){
         alert('⚠️ لا توجد تغييرات لحفظها');
         return;
     }
-    
+
     const promises = [];
-    for(const [elementId, canAccess] of Object.entries(changedPermissions[username])){
-        promises.push(fetch('/api/admin/set-permission', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({username, element_id: elementId, can_access: canAccess ? 1 : 0})
-        }));
+    for(const [elementId, witnesses] of Object.entries(changedWitnessPermissions[username])){
+        for(const [witnessId, canAccess] of Object.entries(witnesses)){
+            promises.push(fetch('/api/admin/set-permission', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, element_id: elementId, witness_id: parseInt(witnessId), can_access: canAccess ? 1 : 0})
+            }));
+        }
     }
-    
+
     const results = await Promise.all(promises);
     let successCount = results.filter(r => r.ok).length;
-    
+
     if(successCount === promises.length){
-        alert(`✅ تم حفظ ${successCount} صلاحية للمراقب ${username}`);
-        delete changedPermissions[username];
+        alert(`✅ تم حفظ ${successCount} صلاحية (شاهد) للمراقب ${username}`);
+        delete changedWitnessPermissions[username];
         // إعادة تحميل الصلاحيات للتحديث
-        loadUserElements();
+        await loadUserWitnesses();
     } else {
         alert(`⚠️ تم حفظ ${successCount} من ${promises.length} صلاحية. حاول مرة أخرى.`);
     }
+}
+function escapeHtml(str){
+    if(!str) return '';
+    return str.replace(/[&<>]/g, function(m){
+        if(m === '&') return '&amp;';
+        if(m === '<') return '&lt;';
+        if(m === '>') return '&gt;';
+        return m;
+    });
+}
+
+function escapeHtmlForJson(obj){
+    return JSON.parse(JSON.stringify(obj, (key, value) => {
+        if(typeof value === 'string') return escapeHtml(value);
+        return value;
+    }));
 }
 function showSection(section, evt){
     document.getElementById('dashboardSection').style.display=section==='dashboard'?'block':'none';
@@ -2145,10 +2707,362 @@ function showSection(section, evt){
     document.getElementById('permissionsSection').style.display=section==='permissions'?'block':'none';
     document.getElementById('syncSection').style.display=section==='sync'?'block':'none';
     document.getElementById('reportsSection').style.display=section==='reports'?'block':'none';
+    document.getElementById('elementsManagementSection').style.display=section==='elementsManagement'?'block':'none';
+    if(section==='elementsManagement') loadElementsList();
     document.querySelectorAll('.nav-item').forEach(item=>item.classList.remove('active'));
     if(evt && evt.target) evt.target.classList.add('active');
     if(section==='users') loadUsers();
     if(section==='permissions') loadPermissionsUsers();
+}
+
+// ============ دوال إدارة العناصر ============
+async function loadElementsList(){
+    const response = await fetch('/api/admin/get-all-elements-db');
+    const data = await response.json();
+    const tbody = document.getElementById('elementsListTableBody');
+    const thead = document.getElementById('elementsTableHeader');
+    
+    if(data.success && data.data){
+        if(data.data.length === 0){
+            tbody.innerHTML = '</td><td colspan="7" style="text-align:center;">لا توجد عناصر</td></tr>';
+            thead.innerHTML = '<tr><th style="padding:12px; width:30px;"><input type="checkbox" id="selectAllElementsCheckbox" onchange="toggleSelectAllElements()"></th><th style="padding:12px;">#</th><th style="padding:12px;">الرمز</th><th style="padding:12px;">ملحق</th><th style="padding:12px;">المعايير</th><th style="padding:12px;">المؤشرات</th><th style="padding:12px;">الشواهد</th><th style="padding:12px;">الإجراءات</th></tr>';
+            return;
+        }
+        
+        // بناء رأس الجدول - المؤشرات كعنوان رئيسي
+        thead.innerHTML = '<tr><th style="padding:12px; width:30px;"><input type="checkbox" id="selectAllElementsCheckbox" onchange="toggleSelectAllElements()"></th><th style="padding:12px;">#</th><th style="padding:12px;">الرمز</th><th style="padding:12px;">ملحق</th><th style="padding:12px;">المعايير</th><th style="padding:12px;">المؤشرات</th><th style="padding:12px;">الشواهد</th><th style="padding:12px;">الإجراءات</th></tr>';
+        
+        // بناء الصفوف
+        tbody.innerHTML = data.data.map((el, idx) => {
+            const code = el.element_id;
+            const appendix = el.appendix || '';
+            const criteria = el.criteria || '';
+            const indicators = el.indicators || '';
+            
+            // جمع الشواهد في نص واحد
+            let witnessesText = '';
+            if(el.witnesses){
+                const witnessList = Object.values(el.witnesses);
+                witnessesText = witnessList.map((w, i) => `${i+1}. ${escapeHtml(w)}`).join('<br>');
+            }
+            if(!witnessesText) witnessesText = '<span style="color:#999;">لا توجد شواهد</span>';
+            
+            return `
+                <tr>
+                    <td style="padding:12px; text-align:center;"><input type="checkbox" class="elementCheckbox" value="${escapeHtml(el.element_id)}" data-id="${escapeHtml(el.element_id)}"></td>
+                    <td style="padding:12px;">${idx+1}</td>
+                    <td style="padding:12px;">${escapeHtml(code)}</td>
+                    <td style="padding:12px;">${escapeHtml(appendix)}</td>
+                    <td style="padding:12px;">${escapeHtml(criteria)}</td>
+                    <td style="padding:12px; font-weight:bold; background:#e8f0fe;">${escapeHtml(indicators)}</td>
+                    <td style="padding:12px; max-width:300px; font-size:12px; line-height:1.6;">${witnessesText}</td>
+                    <td style="padding:12px;">
+                        <button class="btn btn-warning" onclick='editElement(${JSON.stringify(escapeHtmlForJson(el))})' style="margin-left:5px;">✏️ تعديل</button>
+                        <button class="btn btn-danger" onclick="deleteElement('${escapeHtml(el.element_id)}')">🗑️ حذف</button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+    } else {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">خطأ في تحميل数据</td></tr>';
+        thead.innerHTML = '<tr><th style="padding:12px;">#</th><th style="padding:12px;">الرمز</th><th style="padding:12px;">ملحق</th><th style="padding:12px;">المعايير</th><th style="padding:12px;">المؤشرات</th><th style="padding:12px;">الشواهد</th><th style="padding:12px;">الإجراءات</th></tr>';
+    }
+}
+
+
+
+function showAddElementModal(){
+    document.getElementById('addElementModal').style.display = 'flex';
+    document.getElementById('newElementId').value = '';
+    document.getElementById('newElementTitle').value = '';
+    const container = document.getElementById('newWitnessesList');
+    container.innerHTML = '<div style="display:flex; gap:5px; margin-bottom:5px;"><input type="text" placeholder="نص الشاهد" style="flex:1;"><button class="btn btn-danger" onclick="this.parentElement.remove()" style="padding:5px 10px;">✖</button></div>';
+}
+
+function closeAddElementModal(){
+    document.getElementById('addElementModal').style.display = 'none';
+}
+
+function addWitnessField(containerId){
+    const container = document.getElementById(containerId);
+    const div = document.createElement('div');
+    div.style.display = 'flex';
+    div.style.gap = '5px';
+    div.style.marginBottom = '5px';
+    div.innerHTML = '<input type="text" placeholder="نص الشاهد" style="flex:1;"><button class="btn btn-danger" onclick="this.parentElement.remove()" style="padding:5px 10px;">✖</button>';
+    container.appendChild(div);
+}
+
+async function addElement(){
+    const elementId = document.getElementById('newElementId').value.trim();
+    const appendix = document.getElementById('newAppendix').value.trim();
+    const criteria = document.getElementById('newCriteria').value.trim();
+    const indicators = document.getElementById('newIndicators').value.trim();
+    const title = `${appendix} - ${criteria} - ${indicators}`; // بناء العنوان تلقائياً
+    if(!elementId || !appendix || !criteria || !indicators){
+        alert('❌ الرجاء إدخال الرمز، الملحق، المعايير، والمؤشرات');
+        return;
+    }
+    if(!elementId || !title){
+        alert('❌ الرجاء إدخال رقم العنصر والعنوان');
+        return;
+    }
+    const witnessInputs = document.querySelectorAll('#newWitnessesList input[type="text"]');
+    const witnesses = [];
+    witnessInputs.forEach(input => {
+        if(input.value.trim()) witnesses.push(input.value.trim());
+    });
+    if(witnesses.length === 0){
+        alert('❌ الرجاء إضافة شاهد واحد على الأقل');
+        return;
+    }
+    const response = await fetch('/api/admin/add-element', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({element_id: elementId, title: title, witnesses: witnesses})
+    });
+    const result = await response.json();
+    if(result.success){
+        alert('✅ تم إضافة العنصر بنجاح');
+        closeAddElementModal();
+        loadElementsList();
+        if(typeof refreshData === 'function') refreshData();
+    } else {
+        alert('❌ ' + result.error);
+    }
+}
+
+let currentEditElementId = null;
+function editElement(element){
+    currentEditElementId = element.element_id;
+    document.getElementById('editElementIdOrig').value = element.element_id;
+    document.getElementById('editElementId').value = element.element_id;
+    document.getElementById('editAppendix').value = element.appendix || '';
+    document.getElementById('editCriteria').value = element.criteria || '';
+    document.getElementById('editIndicators').value = element.indicators || '';
+    const container = document.getElementById('editWitnessesList');
+    container.innerHTML = '';
+    if(element.witnesses){
+        Object.values(element.witnesses).forEach(witness => {
+            const div = document.createElement('div');
+            div.style.display = 'flex';
+            div.style.gap = '5px';
+            div.style.marginBottom = '5px';
+            div.innerHTML = `<input type="text" value="${escapeHtml(witness)}" style="flex:1;"><button class="btn btn-danger" onclick="this.parentElement.remove()" style="padding:5px 10px;">✖</button>`;
+            container.appendChild(div);
+        });
+    }
+    if(container.children.length === 0){
+        addWitnessField('editWitnessesList');
+    }
+        // تحسين عرض النافذة
+    const modal = document.getElementById('editElementModal');
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+}
+
+function closeEditElementModal(){
+    document.getElementById('editElementModal').style.display = 'none';
+}
+
+async function updateElement(){
+    const newElementId = document.getElementById('editElementId').value.trim();
+    const appendix = document.getElementById('editAppendix').value.trim();
+    const criteria = document.getElementById('editCriteria').value.trim();
+    const indicators = document.getElementById('editIndicators').value.trim();
+    const title = `${appendix} - ${criteria} - ${indicators}`;
+    const oldElementId = document.getElementById('editElementIdOrig').value;
+    
+    if(!newElementId || !appendix || !criteria || !indicators){
+        alert('❌ الرجاء إدخال الرمز، الملحق، المعايير، والمؤشرات');
+        return;
+    }
+    
+    const witnessInputs = document.querySelectorAll('#editWitnessesList input[type="text"]');
+    const witnesses = [];
+    witnessInputs.forEach(input => {
+        if(input.value.trim()) witnesses.push(input.value.trim());
+    });
+    if(witnesses.length === 0){
+        alert('❌ الرجاء إضافة شاهد واحد على الأقل');
+        return;
+    }
+    
+    const response = await fetch('/api/admin/update-element', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({old_element_id: oldElementId, element_id: newElementId, title: title, witnesses: witnesses})
+    });
+    const result = await response.json();
+    if(result.success){
+        alert('✅ تم تحديث العنصر بنجاح');
+        closeEditElementModal();
+        loadElementsList();
+        if(typeof refreshData === 'function') refreshData();
+    } else {
+        alert('❌ ' + result.error);
+    }
+}
+
+async function deleteElement(elementId){
+    if(confirm(`⚠️ هل أنت متأكد من حذف العنصر "${elementId}"؟\nملاحظة: سيتم حذف جميع التوثيقات المرتبطة بهذا العنصر!`)){
+        const response = await fetch('/api/admin/delete-element', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({element_id: elementId})
+        });
+        const result = await response.json();
+        if(result.success){
+            alert('✅ تم حذف العنصر بنجاح');
+            loadElementsList();
+            if(typeof refreshData === 'function') refreshData();
+        } else {
+            alert('❌ ' + result.error);
+        }
+    }
+}
+
+// ============ دوال التصدير والاستيراد المتقدمة ============
+async function exportAllToExcel(){
+    const response = await fetch('/api/admin/export-all-to-excel');
+    if(response.ok){
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `school_evidence_backup_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        alert('✅ تم تصدير جميع البيانات بنجاح');
+    } else {
+        alert('❌ خطأ في تصدير البيانات');
+    }
+}
+
+async function exportElementsToExcel(){
+    const response = await fetch('/api/admin/export-elements-to-excel');
+    if(response.ok){
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `elements_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        alert('✅ تم تصدير العناصر بنجاح');
+    } else {
+        alert('❌ خطأ في تصدير العناصر');
+    }
+}
+
+function showImportModal(){
+    document.getElementById('importModal').style.display = 'flex';
+    document.getElementById('importFile').value = '';
+    document.getElementById('importProgress').style.display = 'none';
+}
+
+function closeImportModal(){
+    document.getElementById('importModal').style.display = 'none';
+}
+
+async function importExcelFile(){
+    const fileInput = document.getElementById('importFile');
+    const file = fileInput.files[0];
+    if(!file){
+        alert('❌ الرجاء اختيار ملف Excel');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const progressDiv = document.getElementById('importProgress');
+    progressDiv.style.display = 'block';
+    const progressBar = progressDiv.querySelector('div');
+    const statusText = document.getElementById('importStatus');
+    progressBar.style.width = '30%';
+    statusText.innerText = 'جاري رفع الملف...';
+    
+    try{
+        const response = await fetch('/api/admin/import-from-excel', {
+            method: 'POST',
+            body: formData
+        });
+        
+        progressBar.style.width = '80%';
+        statusText.innerText = 'جاري معالجة البيانات...';
+        
+        const result = await response.json();
+        
+        if(result.success){
+            progressBar.style.width = '100%';
+            statusText.innerText = '✅ اكتمل الاستيراد!';
+            alert(`✅ تم استيراد البيانات بنجاح!\nالعناصر: ${result.elements || 0}\nالتوثيقات: ${result.evidences || 0}\nالمستخدمين: ${result.users || 0}`);
+            setTimeout(() => {
+                closeImportModal();
+                refreshData();
+                loadElementsList();
+                loadUsers();
+            }, 1500);
+        } else {
+            alert('❌ خطأ: ' + result.error);
+            closeImportModal();
+        }
+    } catch(err){
+        alert('❌ خطأ في الاستيراد: ' + err.message);
+        closeImportModal();
+    }
+}
+
+async function importElementsFromExcel(){
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xlsx,.xls';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if(!file) return;
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const loadingMsg = document.createElement('div');
+        loadingMsg.style.position = 'fixed';
+        loadingMsg.style.top = '50%';
+        loadingMsg.style.left = '50%';
+        loadingMsg.style.transform = 'translate(-50%, -50%)';
+        loadingMsg.style.background = 'white';
+        loadingMsg.style.padding = '20px';
+        loadingMsg.style.borderRadius = '10px';
+        loadingMsg.style.zIndex = '9999';
+        loadingMsg.innerHTML = '⏳ جاري استيراد العناصر...';
+        document.body.appendChild(loadingMsg);
+        
+        try{
+            const response = await fetch('/api/admin/import-elements-from-excel', {
+                method: 'POST',
+                body: formData
+            });
+            const result = await response.json();
+            document.body.removeChild(loadingMsg);
+            if(result.success){
+                alert(`✅ تم استيراد ${result.count} عنصر بنجاح`);
+                loadElementsList();
+                if(typeof refreshData === 'function') refreshData();
+            } else {
+                alert('❌ خطأ: ' + result.error);
+            }
+        } catch(err){
+            document.body.removeChild(loadingMsg);
+            alert('❌ خطأ: ' + err.message);
+        }
+    };
+    input.click();
 }
 async function logout(){
     await fetch('/api/logout',{method:'POST'});
@@ -2172,6 +3086,256 @@ function toggleSidebar(){
 document.getElementById('menuToggleBtn').onclick = toggleSidebar;
 refreshData();
 const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/chart.js';document.head.appendChild(script);
+
+// ============ دوال تحديد الكل وحذف المحدد للعناصر ============
+function toggleSelectAllElements() {
+    const selectAllCheckbox = document.getElementById('selectAllElementsCheckbox');
+    if (!selectAllCheckbox) return;
+    
+    const checkboxes = document.querySelectorAll('#elementsListTableBody .elementCheckbox');
+    const isChecked = selectAllCheckbox.checked;
+    checkboxes.forEach(cb => {
+        cb.checked = isChecked;
+    });
+}
+function toggleSelectAllPermissions() {
+    const selectAllCheckbox = document.getElementById('selectAllPermissionsCheckbox');
+    if (!selectAllCheckbox) return;
+    
+    const checkboxes = document.querySelectorAll('#elementsPermissionsGrid input[type="checkbox"]');
+    const isChecked = selectAllCheckbox.checked;
+    checkboxes.forEach(cb => {
+        if(cb.id !== 'selectAllPermissionsCheckbox') {
+            cb.checked = isChecked;
+            // trigger change event
+            const event = new Event('change');
+            cb.dispatchEvent(event);
+        }
+    });
+}
+function toggleSelectAllPermissionsTable() {
+    const selectAllCheckbox = document.getElementById('selectAllPermissionsTableCheckbox');
+    if (!selectAllCheckbox) return;
+    
+    const checkboxes = document.querySelectorAll('#permissionsTableBody .permCheckbox');
+    const isChecked = selectAllCheckbox.checked;
+    checkboxes.forEach(cb => {
+        cb.checked = isChecked;
+        // trigger change event
+        const event = new Event('change');
+        cb.dispatchEvent(event);
+    });
+}
+async function deleteSelectedPermissions() {
+    const selectedCheckboxes = document.querySelectorAll('#permissionsTableBody .permCheckbox:checked');
+    const selectedPermissions = [];
+    selectedCheckboxes.forEach(cb => {
+        const elementId = cb.value;
+        const username = document.getElementById('permUserSelect').value;
+        if(username && elementId) {
+            selectedPermissions.push({username, element_id: elementId});
+        }
+    });
+    
+    if(selectedPermissions.length === 0) {
+        alert('⚠️ الرجاء تحديد الصلاحيات المراد حذفها');
+        return;
+    }
+    
+    if(confirm(`⚠️ هل أنت متأكد من حذف ${selectedPermissions.length} صلاحية؟`)) {
+        let deletedCount = 0;
+        for(const perm of selectedPermissions) {
+            const response = await fetch('/api/admin/set-permission', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: perm.username, element_id: perm.element_id, can_access: 0})
+            });
+            const result = await response.json();
+            if(result.success) deletedCount++;
+        }
+        alert(`✅ تم حذف ${deletedCount} صلاحية بنجاح`);
+        // إعادة تحميل الصلاحيات
+        loadUserElements();
+        // إعادة تحميل قائمة المستخدمين لتحديث الإحصائيات
+        loadUsers();
+    }
+}
+
+async function deleteSelectedElements() {
+    const selectedCheckboxes = document.querySelectorAll('#elementsListTableBody .elementCheckbox:checked');
+    if (selectedCheckboxes.length === 0) {
+        alert('⚠️ الرجاء تحديد العناصر المراد حذفها');
+        return;
+    }
+    
+    const selectedElements = Array.from(selectedCheckboxes).map(cb => cb.value);
+    
+    if (confirm(`⚠️ هل أنت متأكد من حذف ${selectedElements.length} عنصر؟\nملاحظة: سيتم حذف جميع التوثيقات المرتبطة بهذه العناصر!`)) {
+        let deletedCount = 0;
+        let failedCount = 0;
+        
+        for (const elementId of selectedElements) {
+            try {
+                const response = await fetch('/api/admin/delete-element', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({element_id: elementId})
+                });
+                const result = await response.json();
+                if (result.success) {
+                    deletedCount++;
+                } else {
+                    failedCount++;
+                    console.error(`فشل حذف ${elementId}: ${result.error}`);
+                }
+            } catch(err) {
+                failedCount++;
+                console.error(`خطأ في حذف ${elementId}:`, err);
+            }
+        }
+        
+        alert(`✅ تم حذف ${deletedCount} عنصر بنجاح\n❌ فشل حذف ${failedCount} عنصر`);
+        
+        // إعادة تحميل القائمة
+        loadElementsList();
+        if (typeof refreshData === 'function') refreshData();
+        
+        // إلغاء تحديد "تحديد الكل"
+        const selectAllCheckbox = document.getElementById('selectAllElementsCheckbox');
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+    }
+}
+// ============ دوال تحديد الكل وحذف المحدد للمستخدمين ============
+function toggleSelectAllUsers() {
+    const selectAllCheckbox = document.getElementById('selectAllUsersCheckbox');
+    if (!selectAllCheckbox) return;
+    
+    const checkboxes = document.querySelectorAll('#usersTableBody .userCheckbox');
+    const isChecked = selectAllCheckbox.checked;
+    checkboxes.forEach(cb => {
+        cb.checked = isChecked;
+    });
+}
+
+async function deleteSelectedUsers() {
+    const selectedCheckboxes = document.querySelectorAll('#usersTableBody .userCheckbox:checked');
+    if (selectedCheckboxes.length === 0) {
+        alert('⚠️ الرجاء تحديد المستخدمين المراد حذفهم');
+        return;
+    }
+    
+    const selectedUsers = Array.from(selectedCheckboxes).map(cb => ({
+        id: cb.value,
+        username: cb.getAttribute('data-username')
+    }));
+    
+    // التحقق من عدم تحديد المدير الرئيسي
+    const hasAdmin = selectedUsers.some(u => u.username === 'admin');
+    if (hasAdmin) {
+        alert('❌ لا يمكن حذف حساب المدير الرئيسي');
+        return;
+    }
+    
+    if (confirm(`⚠️ هل أنت متأكد من حذف ${selectedUsers.length} مستخدم؟\nملاحظة: سيتم حذف جميع التوثيقات والصلاحيات المرتبطة بهم!`)) {
+        let deletedCount = 0;
+        let failedCount = 0;
+        
+        for (const user of selectedUsers) {
+            try {
+                const response = await fetch('/api/admin/delete-user', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: user.id, username: user.username})
+                });
+                const result = await response.json();
+                if (result.success) {
+                    deletedCount++;
+                } else {
+                    failedCount++;
+                    console.error(`فشل حذف ${user.username}: ${result.error}`);
+                }
+            } catch(err) {
+                failedCount++;
+                console.error(`خطأ في حذف ${user.username}:`, err);
+            }
+        }
+        
+        alert(`✅ تم حذف ${deletedCount} مستخدم بنجاح\n❌ فشل حذف ${failedCount} مستخدم`);
+        
+        // إعادة تحميل القوائم
+        loadUsers();
+        if (typeof refreshData === 'function') refreshData();
+        if (typeof loadPermissionsUsers === 'function') loadPermissionsUsers();
+        
+        // إلغاء تحديد "تحديد الكل"
+        const selectAllCheckbox = document.getElementById('selectAllUsersCheckbox');
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+    }
+}
+
+// ============ دوال تصدير واستيراد المستخدمين ============
+async function exportUsersToExcel() {
+    const response = await fetch('/api/admin/export-users-to-excel');
+    if(response.ok){
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `users_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        alert('✅ تم تصدير المستخدمين بنجاح');
+    } else {
+        alert('❌ خطأ في تصدير المستخدمين');
+    }
+}
+
+async function importUsersFromExcel() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xlsx,.xls';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if(!file) return;
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const loadingMsg = document.createElement('div');
+        loadingMsg.style.position = 'fixed';
+        loadingMsg.style.top = '50%';
+        loadingMsg.style.left = '50%';
+        loadingMsg.style.transform = 'translate(-50%, -50%)';
+        loadingMsg.style.background = 'white';
+        loadingMsg.style.padding = '20px';
+        loadingMsg.style.borderRadius = '10px';
+        loadingMsg.style.zIndex = '9999';
+        loadingMsg.innerHTML = '⏳ جاري استيراد المستخدمين...';
+        document.body.appendChild(loadingMsg);
+        
+        try{
+            const response = await fetch('/api/admin/import-users-from-excel', {
+                method: 'POST',
+                body: formData
+            });
+            const result = await response.json();
+            document.body.removeChild(loadingMsg);
+            if(result.success){
+                alert(`✅ تم استيراد ${result.count} مستخدم بنجاح`);
+                loadUsers();
+                if(typeof loadPermissionsUsers === 'function') loadPermissionsUsers();
+            } else {
+                alert('❌ خطأ: ' + result.error);
+            }
+        } catch(err){
+            document.body.removeChild(loadingMsg);
+            alert('❌ خطأ: ' + err.message);
+        }
+    };
+    input.click();
+}
 </script>
 </body>
 </html>
@@ -2217,7 +3381,26 @@ def change_password():
 def dashboard():
     if 'username' not in session:
         return redirect(url_for('index'))
-    return render_template_string(DASHBOARD_PAGE, elements=ELEMENTS, username=session['username'])
+    
+    # جلب العناصر من قاعدة البيانات بدلاً من ELEMENTS الثابتة
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT element_id, title, witnesses FROM elements ORDER BY element_id")
+    rows = c.fetchall()
+    conn.close()
+    
+    elements_from_db = {}
+    for row in rows:
+        try:
+            witnesses = json.loads(row[2]) if row[2] else []
+            # تحويل الشواهد من قاموس {1: "نص", 2: "نص"} إلى قائمة ["نص", "نص"]
+            if isinstance(witnesses, dict):
+                witnesses = list(witnesses.values())
+        except:
+            witnesses = []
+        elements_from_db[row[0]] = {"title": row[1], "witnesses": witnesses}
+    
+    return render_template_string(DASHBOARD_PAGE, elements=elements_from_db, username=session['username'])
 
 @app.route('/admin')
 def admin_panel():
@@ -2585,6 +3768,300 @@ def api_sync_from_cloud():
     result = sync_from_supabase()
     return jsonify(result)
 
+# ============ دوال التصدير والاستيراد إلى Excel ============
+import io
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill
+
+@app.route('/api/admin/export-all-to-excel', methods=['GET'])
+def admin_export_all_to_excel():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    output = io.BytesIO()
+    writer = pd.ExcelWriter(output, engine='openpyxl')
+    
+    # 1. تصدير جدول التوثيقات
+    conn = sqlite3.connect(DB_PATH)
+    df_evidences = pd.read_sql_query("SELECT id, username, element_id, element_title, witness_id, witness_text, image_url, created_at FROM evidences ORDER BY created_at DESC", conn)
+    df_evidences.to_excel(writer, sheet_name='التوثيقات', index=False)
+    
+    # 2. تصدير جدول العناصر
+    df_elements = pd.read_sql_query("SELECT element_id, title, witnesses FROM elements ORDER BY element_id", conn)
+    if not df_elements.empty:
+        df_elements['witnesses'] = df_elements['witnesses'].apply(lambda x: str(x) if x else '')
+    df_elements.to_excel(writer, sheet_name='العناصر', index=False)
+    
+    # 3. تصدير جدول المستخدمين
+    df_users = pd.read_sql_query("SELECT id, username, full_name FROM users ORDER BY id", conn)
+    df_users.to_excel(writer, sheet_name='المستخدمين', index=False)
+    
+    # 4. تصدير جدول الصلاحيات
+    df_permissions = pd.read_sql_query("SELECT username, element_id, can_access FROM user_permissions ORDER BY username", conn)
+    df_permissions.to_excel(writer, sheet_name='الصلاحيات', index=False)
+    
+    conn.close()
+    writer.close()
+    output.seek(0)
+    
+    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'full_backup_{datetime.now().strftime("%Y%m%d")}.xlsx')
+
+@app.route('/api/admin/export-elements-to-excel', methods=['GET'])
+def admin_export_elements_to_excel():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    try:
+        output = io.BytesIO()
+        conn = sqlite3.connect(DB_PATH)
+        
+        # جلب جميع الأعمدة من قاعدة البيانات
+        c = conn.cursor()
+        c.execute("SELECT element_id, title, witnesses, appendix, criteria, indicators FROM elements ORDER BY element_id")
+        rows = c.fetchall()
+        conn.close()
+        
+        if not rows:
+            # إنشاء ملف Excel فارغ
+            empty_df = pd.DataFrame(columns=['الرمز', 'ملحق', 'المعايير', 'المؤشرات'])
+            empty_df.to_excel(output, sheet_name='العناصر', index=False)
+            output.seek(0)
+            return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'elements_{datetime.now().strftime("%Y%m%d")}.xlsx')
+        
+        # حساب أقصى عدد من الشواهد
+        max_witnesses = 0
+        for row in rows:
+            witnesses_str = row[2]
+            if witnesses_str:
+                try:
+                    witnesses = json.loads(witnesses_str) if witnesses_str else {}
+                    max_witnesses = max(max_witnesses, len(witnesses))
+                except:
+                    pass
+        
+        if max_witnesses < 1:
+            max_witnesses = 1
+        
+        # بناء البيانات
+        rows_data = []
+        for row in rows:
+            element_id = row[0] or ''
+            title = row[1] or ''
+            witnesses_str = row[2]
+            # استخدام القيم المخزنة مباشرة
+            appendix = row[3] if row[3] is not None else ''
+            criteria = row[4] if row[4] is not None else ''
+            indicators = row[5] if row[5] is not None else ''
+            
+            # معالجة الشواهد
+            witnesses = {}
+            if witnesses_str:
+                try:
+                    witnesses = json.loads(witnesses_str)
+                except:
+                    witnesses = {}
+            
+            row_data = {
+                'الرمز': element_id,
+                'ملحق': appendix,
+                'المعايير': criteria,
+                'المؤشرات': indicators
+            }
+            
+            for i in range(1, max_witnesses + 1):
+                row_data[f'الشاهد {i}'] = witnesses.get(str(i), '')
+            
+            rows_data.append(row_data)
+        
+        # إنشاء DataFrame
+        columns = ['الرمز', 'ملحق', 'المعايير', 'المؤشرات'] + [f'الشاهد {i}' for i in range(1, max_witnesses + 1)]
+        df_export = pd.DataFrame(rows_data, columns=columns)
+        
+        df_export.to_excel(output, sheet_name='العناصر', index=False)
+        output.seek(0)
+        
+        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'elements_{datetime.now().strftime("%Y%m%d")}.xlsx')
+    
+    except Exception as e:
+        print(f"خطأ في تصدير العناصر: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+    
+
+@app.route('/api/admin/import-from-excel', methods=['POST'])
+def admin_import_from_excel():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'لا يوجد ملف'})
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'لم يتم اختيار ملف'})
+    
+    try:
+        df_elements = pd.read_excel(file, sheet_name='العناصر')
+        file.seek(0)
+        df_evidences = pd.read_excel(file, sheet_name='التوثيقات')
+        file.seek(0)
+        df_users = pd.read_excel(file, sheet_name='المستخدمين')
+        file.seek(0)
+        df_permissions = pd.read_excel(file, sheet_name='الصلاحيات')
+    except:
+        df_elements = pd.DataFrame()
+        df_evidences = pd.DataFrame()
+        df_users = pd.DataFrame()
+        df_permissions = pd.DataFrame()
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    result_count = {'elements': 0, 'evidences': 0, 'users': 0, 'permissions': 0}
+    
+    # استيراد العناصر
+    if not df_elements.empty and 'element_id' in df_elements.columns:
+        for _, row in df_elements.iterrows():
+            element_id = row.get('element_id')
+            title = row.get('title')
+            witnesses_str = row.get('witnesses')
+            if pd.notna(element_id) and pd.notna(title):
+                witnesses = {}
+                if pd.notna(witnesses_str) and witnesses_str:
+                    try:
+                        witnesses = json.loads(witnesses_str)
+                    except:
+                        witnesses = {}
+                c.execute("INSERT OR REPLACE INTO elements (element_id, title, witnesses) VALUES (?, ?, ?)",
+                          (str(element_id), str(title), json.dumps(witnesses, ensure_ascii=False)))
+                result_count['elements'] += 1
+    
+    # استيراد التوثيقات
+    if not df_evidences.empty:
+        for _, row in df_evidences.iterrows():
+            username = row.get('username')
+            element_id = row.get('element_id')
+            element_title = row.get('element_title')
+            witness_id = row.get('witness_id')
+            witness_text = row.get('witness_text')
+            image_url = row.get('image_url')
+            created_at = row.get('created_at')
+            if pd.notna(username) and pd.notna(element_id):
+                c.execute("""INSERT OR IGNORE INTO evidences 
+                             (username, element_id, element_title, witness_id, witness_text, image_url, created_at, synced)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
+                          (str(username), str(element_id), str(element_title) if pd.notna(element_title) else '',
+                           int(witness_id) if pd.notna(witness_id) else 1,
+                           str(witness_text) if pd.notna(witness_text) else '',
+                           str(image_url) if pd.notna(image_url) else '',
+                           str(created_at) if pd.notna(created_at) else datetime.now().isoformat()))
+                result_count['evidences'] += 1
+    
+    # استيراد المستخدمين
+    if not df_users.empty:
+        for _, row in df_users.iterrows():
+            username = row.get('username')
+            full_name = row.get('full_name')
+            if pd.notna(username):
+                c.execute("INSERT OR IGNORE INTO users (username, password, full_name) VALUES (?, ?, ?)",
+                          (str(username), 'pass123', str(full_name) if pd.notna(full_name) else ''))
+                result_count['users'] += 1
+    
+    # استيراد الصلاحيات
+    if not df_permissions.empty:
+        for _, row in df_permissions.iterrows():
+            username = row.get('username')
+            element_id = row.get('element_id')
+            can_access = row.get('can_access')
+            if pd.notna(username) and pd.notna(element_id):
+                c.execute("INSERT OR REPLACE INTO user_permissions (username, element_id, can_access) VALUES (?, ?, ?)",
+                          (str(username), str(element_id), int(can_access) if pd.notna(can_access) else 1))
+                result_count['permissions'] += 1
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'elements': result_count['elements'], 'evidences': result_count['evidences'], 'users': result_count['users'], 'permissions': result_count['permissions']})
+
+@app.route('/api/admin/import-elements-from-excel', methods=['POST'])
+def admin_import_elements_from_excel():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'لا يوجد ملف'})
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'لم يتم اختيار ملف'})
+    
+    try:
+        df = pd.read_excel(file)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'خطأ في قراءة الملف: {str(e)}'})
+    
+    # التحقق من وجود الأعمدة الأساسية
+    if 'الرمز' not in df.columns:
+        # محاولة قراءة كـ element_id (للتوافق مع الإصدارات القديمة)
+        if 'element_id' in df.columns:
+            df.rename(columns={'element_id': 'الرمز', 'title': 'العنوان'}, inplace=True)
+        else:
+            return jsonify({'success': False, 'error': 'الملف يجب أن يحتوي على عمود "الرمز"'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    count = 0
+    
+    # تحديد أعمدة الشواهد (كل الأعمدة التي تبدأ بـ "الشاهد")
+    witness_columns = [col for col in df.columns if col.startswith('الشاهد')]
+    
+    for _, row in df.iterrows():
+        element_id = row.get('الرمز')
+        # محاولة الحصول على العنوان من أعمدة مختلفة
+        title = row.get('العنوان') if 'العنوان' in df.columns else row.get('title', '')
+        
+        if pd.notna(element_id) and pd.notna(title):
+            witnesses = {}
+            # جمع الشواهد من الأعمدة
+            for i, col in enumerate(witness_columns, 1):
+                witness_text = row.get(col, '')
+                if pd.notna(witness_text) and str(witness_text).strip():
+                    witnesses[str(i)] = str(witness_text).strip()
+            
+            # إذا لم يتم العثور على شواهد في الأعمدة المنفصلة، حاول القراءة من عمود witnesses_list (للتوافق القديم)
+            if not witnesses and 'witnesses_list' in df.columns and pd.notna(row.get('witnesses_list')):
+                witness_lines = str(row.get('witnesses_list')).split('\n')
+                witnesses = {str(i+1): w.strip() for i, w in enumerate(witness_lines) if w.strip()}
+            elif not witnesses and 'witnesses' in df.columns and pd.notna(row.get('witnesses')):
+                try:
+                    witnesses = json.loads(row.get('witnesses'))
+                except:
+                    witnesses = {}
+            
+            # استخراج الملحق والمعايير والمؤشرات من element_id
+            parts = str(element_id).split('-')
+            appendix_val = parts[1] if len(parts) > 1 else ''
+            criteria_val = parts[2] if len(parts) > 2 else ''
+            indicators_val = parts[3] if len(parts) > 3 else ''
+            
+            # محاولة قراءة الملحق والمعايير والمؤشرات من الأعمدة إذا كانت موجودة في ملف Excel
+            if 'ملحق' in df.columns and pd.notna(row.get('ملحق')):
+                appendix_val = str(row.get('ملحق'))
+            if 'المعايير' in df.columns and pd.notna(row.get('المعايير')):
+                criteria_val = str(row.get('المعايير'))
+            if 'المؤشرات' in df.columns and pd.notna(row.get('المؤشرات')):
+                indicators_val = str(row.get('المؤشرات'))
+            
+            c.execute("INSERT OR REPLACE INTO elements (element_id, title, witnesses, appendix, criteria, indicators) VALUES (?, ?, ?, ?, ?, ?)",
+                      (str(element_id), str(title), json.dumps(witnesses, ensure_ascii=False), appendix_val, criteria_val, indicators_val))
+            count += 1
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'count': count})
+
 @app.route('/api/get-evidence-by-id', methods=['GET'])
 def get_evidence_by_id():
     if 'username' not in session:
@@ -2709,7 +4186,68 @@ def get_evidences_by_witness():
         })
     
     return jsonify({'success': True, 'data': data})
+@app.route('/api/admin/export-users-to-excel', methods=['GET'])
+def admin_export_users_to_excel():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    try:
+        output = io.BytesIO()
+        conn = sqlite3.connect(DB_PATH)
+        
+        df = pd.read_sql_query("SELECT id, username, full_name FROM users WHERE username != 'admin' ORDER BY id", conn)
+        conn.close()
+        
+        df.to_excel(output, sheet_name='المستخدمين', index=False)
+        output.seek(0)
+        
+        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'users_{datetime.now().strftime("%Y%m%d")}.xlsx')
+    
+    except Exception as e:
+        print(f"خطأ في تصدير المستخدمين: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/admin/import-users-from-excel', methods=['POST'])
+def admin_import_users_from_excel():
+    if 'username' not in session or session.get('username') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'لا يوجد ملف'})
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'لم يتم اختيار ملف'})
+    
+    try:
+        df = pd.read_excel(file)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'خطأ في قراءة الملف: {str(e)}'})
+    
+    if 'username' not in df.columns:
+        return jsonify({'success': False, 'error': 'الملف يجب أن يحتوي على عمود "username"'})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    count = 0
+    
+    for _, row in df.iterrows():
+        username = row.get('username')
+        full_name = row.get('full_name') if 'full_name' in df.columns else ''
+        password = 'pass123'  # كلمة سر افتراضية
+        
+        if pd.notna(username) and username:
+            # التحقق من عدم وجود المستخدم
+            c.execute("SELECT id FROM users WHERE username=?", (str(username),))
+            if not c.fetchone():
+                c.execute("INSERT INTO users (username, password, full_name) VALUES (?, ?, ?)",
+                          (str(username), password, str(full_name) if pd.notna(full_name) else ''))
+                count += 1
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'count': count})
 
 # ============ تشغيل التطبيق ============
 if __name__ == '__main__':
