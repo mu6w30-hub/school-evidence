@@ -553,6 +553,50 @@ ELEMENTS = {
 }
 # ============ دوال قاعدة البيانات ============
 def init_local_db():
+    # محاولة استعادة البيانات من Supabase أولاً
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}'
+            }
+            
+            # جلب العناصر من Supabase
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/elements",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                supabase_elements = response.json()
+                
+                # إذا وجدت عناصر في Supabase، قم بحفظها في قاعدة البيانات المحلية
+                if supabase_elements:
+                    conn = sqlite3.connect(DB_PATH)
+                    c = conn.cursor()
+                    
+                    for element in supabase_elements:
+                        c.execute("""
+                            INSERT OR REPLACE INTO elements 
+                            (element_id, title, witnesses, appendix, criteria, indicators)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            element.get('element_id'),
+                            element.get('title'),
+                            element.get('witnesses'),
+                            element.get('appendix', ''),
+                            element.get('criteria', ''),
+                            element.get('indicators', '')
+                        ))
+                    
+                    conn.commit()
+                    conn.close()
+                    print(f"✅ تم استعادة {len(supabase_elements)} عنصر من Supabase")
+                    return
+        except Exception as e:
+            print(f"⚠️ خطأ في استعادة البيانات من Supabase: {e}")
+    
+    # إذا لم ينجح الاستعادة من Supabase، قم بإنشاء الجداول من ELEMENTS الثابتة
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
@@ -4031,6 +4075,9 @@ def admin_import_elements_from_excel():
     # تحديد أعمدة الشواهد (كل الأعمدة التي تبدأ بـ "الشاهد")
     witness_columns = [col for col in df.columns if col.startswith('الشاهد')]
     
+        # قائمة لتخزين العناصر للحفظ في Supabase
+    elements_to_save = []
+    
     for _, row in df.iterrows():
         element_id = row.get('الرمز')
         # محاولة الحصول على العنوان من أعمدة مختلفة
@@ -4068,9 +4115,57 @@ def admin_import_elements_from_excel():
             if 'المؤشرات' in df.columns and pd.notna(row.get('المؤشرات')):
                 indicators_val = str(row.get('المؤشرات'))
             
+            # تخزين البيانات مؤقتاً للحفظ في Supabase
+            element_data = {
+                'element_id': str(element_id),
+                'title': str(title),
+                'witnesses': json.dumps(witnesses, ensure_ascii=False),
+                'appendix': appendix_val,
+                'criteria': criteria_val,
+                'indicators': indicators_val
+            }
+            elements_to_save.append(element_data)
+            
+            # حفظ في قاعدة البيانات المحلية
             c.execute("INSERT OR REPLACE INTO elements (element_id, title, witnesses, appendix, criteria, indicators) VALUES (?, ?, ?, ?, ?, ?)",
                       (str(element_id), str(title), json.dumps(witnesses, ensure_ascii=False), appendix_val, criteria_val, indicators_val))
             count += 1
+    
+    # حفظ في Supabase بعد جمع كل العناصر
+    if SUPABASE_URL and SUPABASE_KEY and elements_to_save:
+        headers = {
+            'apikey': SUPABASE_KEY,
+            'Authorization': f'Bearer {SUPABASE_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        for element_data in elements_to_save:
+            try:
+                # التحقق من عدم وجود العنصر في Supabase
+                check_response = requests.get(
+                    f"{SUPABASE_URL}/rest/v1/elements?element_id=eq.{element_data['element_id']}",
+                    headers=headers
+                )
+                
+                if check_response.status_code == 200 and check_response.json():
+                    # تحديث إذا كان موجوداً
+                    response = requests.patch(
+                        f"{SUPABASE_URL}/rest/v1/elements?element_id=eq.{element_data['element_id']}",
+                        headers=headers,
+                        json=element_data
+                    )
+                else:
+                    # إضافة إذا كان جديداً
+                    response = requests.post(
+                        f"{SUPABASE_URL}/rest/v1/elements",
+                        headers=headers,
+                        json=element_data
+                    )
+                
+                if response.status_code not in [200, 201, 204]:
+                    print(f"⚠️ فشل حفظ العنصر {element_data.get('element_id')} في Supabase: {response.status_code}")
+            except Exception as e:
+                print(f"⚠️ خطأ في حفظ العنصر {element_data.get('element_id')} في Supabase: {e}")
     
     conn.commit()
     conn.close()
