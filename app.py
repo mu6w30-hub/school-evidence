@@ -660,6 +660,7 @@ ELEMENTS = {
     ]}
 }
 # ============ دوال قاعدة البيانات ============
+
 def init_local_db():
     # محاولة استعادة البيانات من Supabase أولاً
     if SUPABASE_URL and SUPABASE_KEY:
@@ -754,6 +755,33 @@ def init_local_db():
             indicators_val = parts[3] if len(parts) > 3 else ''
             c.execute("INSERT OR IGNORE INTO elements (element_id, title, witnesses, appendix, criteria, indicators) VALUES (?, ?, ?, ?, ?, ?)",
                       (element_id, element_data['title'], witnesses_json, appendix_val, criteria_val, indicators_val))
+    
+    # محاولة استعادة الصلاحيات من Supabase
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}'
+            }
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/user_permissions",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                supabase_permissions = response.json()
+                if supabase_permissions:
+                    for perm in supabase_permissions:
+                        c.execute("""INSERT OR REPLACE INTO user_permissions 
+                                     (username, element_id, witness_id, can_access)
+                                     VALUES (?, ?, ?, ?)""",
+                                  (perm.get('username'), perm.get('element_id'), 
+                                   perm.get('witness_id'), perm.get('can_access', 1)))
+                    print(f"✅ تم استعادة {len(supabase_permissions)} صلاحية من Supabase")
+        except Exception as e:
+            print(f"⚠️ خطأ في استعادة الصلاحيات من Supabase: {e}")
+    
     # محاولة استعادة المستخدمين من Supabase أولاً
     users_restored = False
     if SUPABASE_URL and SUPABASE_KEY:
@@ -800,8 +828,10 @@ def init_local_db():
             if not c.fetchone():
                 c.execute("INSERT INTO users (username, password, full_name) VALUES (?, ?, ?)",
                           (username, password, full_name))
+    
     conn.commit()
     conn.close()
+
 def migrate_database():
     """إضافة الأعمدة الجديدة إلى جدول elements إذا لم تكن موجودة"""
     conn = sqlite3.connect(DB_PATH)
@@ -3723,38 +3753,97 @@ def save_evidence():
     if not witness_text:
         return jsonify({'success': False, 'error': 'الشاهد غير موجود'})
     
-    # استخراج الامتداد من اسم الملف أولاً (الأفضل)
-    if '.' in filename and not filename.endswith('.file'):
-        ext = filename.split('.')[-1]
-    else:
-        # خريطة موسعة لأنواع الملفات
-        ext_map = {
-            'application/pdf': 'pdf',
-            'application/msword': 'doc',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-            'application/vnd.ms-excel': 'xls',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-            'application/vnd.ms-powerpoint': 'ppt',
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
-            'image/jpeg': 'jpg',
-            'image/png': 'png',
-            'image/gif': 'gif',
-            'image/webp': 'webp',
-            'image/bmp': 'bmp',
-            'text/plain': 'txt',
-            'application/zip': 'zip',
-            'application/x-rar-compressed': 'rar'
-        }
-        ext = ext_map.get(file_type, '')
-        
-        # إذا لم نجد امتداداً من نوع الملف، حاول استخراجه من filename الأصلي
-        if not ext and '.' in filename:
-            ext = filename.split('.')[-1]
-        
-        # إذا لم نجد امتداداً إطلاقاً، استخدم 'file' كآخر خيار
-        if not ext:
-            ext = 'file'
+    # استخراج الامتداد من اسم الملف الأصلي أولاً
+    filename_ext = ''
+    if '.' in filename:
+        filename_ext = filename.split('.')[-1].lower()
+        allowed_extensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 
+                              'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'txt', 'zip', 'rar', 'bin']
+        if filename_ext not in allowed_extensions:
+            filename_ext = ''
     
+    # خريطة MIME types (موسعة)
+    ext_map = {
+        'application/pdf': 'pdf',
+        'application/msword': 'doc',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+        'application/vnd.ms-excel': 'xls',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+        'application/vnd.ms-powerpoint': 'ppt',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+        'image/bmp': 'bmp',
+        'text/plain': 'txt',
+        'application/zip': 'zip',
+        'application/x-rar-compressed': 'rar',
+        'video/mp4': 'mp4',
+        'video/mpeg': 'mpg',
+        'audio/mpeg': 'mp3',
+        'application/octet-stream': ''  # لا نستخدم 'bin' تلقائياً
+    }
+    
+    # تحديد الامتداد حسب الأولوية:
+    # 1. من نوع الملف (MIME type) إذا كان معروفاً
+    # 2. من اسم الملف إذا كان يحتوي على امتداد معروف
+    # 3. رفض الرفع إذا لم نعرف نوع الملف
+    
+    ext = ext_map.get(file_type, '')
+    
+    # إذا لم نجد امتداداً من نوع الملف، حاول من اسم الملف
+    if not ext and filename_ext:
+        ext = filename_ext
+    
+    # تعريف new_filename هنا (خارج كل الشروط) - سنؤجل هذا
+    # new_filename = ...  (سنضعه لاحقاً)
+    
+    if 'base64,' in file_data:
+        file_data = file_data.split('base64,')[1]
+    
+    file_bytes = base64.b64decode(file_data)
+    
+    # تحويل البايتات إلى سلسلة نصية لفحص التوقيع (للبايتات الأولى فقط)
+    # للصور الملتقطة من الكاميرا (قد تصل كـ octet-stream ولكنها صور)
+    if not ext and file_type == 'application/octet-stream':
+        try:
+            # فحص أول 20 بايت لتحديد نوع الملف
+            if len(file_bytes) >= 4:
+                # PNG توقيع: 137 80 78 71
+                if file_bytes[0:4] == b'\x89PNG':
+                    ext = 'png'
+                    print("📁 تم التعرف على PNG من توقيع bytes")
+                # JPEG توقيع: 255 216 255
+                elif file_bytes[0:3] == b'\xff\xd8\xff':
+                    ext = 'jpg'
+                    print("📁 تم التعرف على JPEG من توقيع bytes")
+                # PDF توقيع: 37 80 68 70 ( %PDF)
+                elif file_bytes[0:4] == b'%PDF':
+                    ext = 'pdf'
+                    print("📁 تم التعرف على PDF من توقيع bytes")
+                # Word (DOCX/XLSX/PPTX) - توقيع ZIP: 80 75 3 4
+                elif file_bytes[0:4] == b'PK\x03\x04':
+                    # لا يمكن تحديد النوع بدقة، نتركه بدون امتداد حتى يتم تحديده من اسم الملف
+                    print("📁 تم التعرف على ملف ZIP (قد يكون Office文档)")
+        except Exception as e:
+            print(f"⚠️ خطأ في فحص توقيع الملف: {e}")
+    # إذا لم نجد امتداداً إطلاقاً، أعد خطأ بدلاً من استخدام 'bin'
+    if not ext and filename_ext:
+        ext = filename_ext
+    
+    if not ext:
+        return jsonify({'success': False, 'error': '⚠️ غير قادر على تحديد نوع الملف. يرجى التأكد من اسم الملف أو نوعه.'})
+    
+    print(f"📁 الامتداد المستخرج: {ext}")
+    
+    # إذا لم نجد امتداداً إطلاقاً، أعد خطأ بدلاً من استخدام 'bin'
+    if not ext:
+        return jsonify({'success': False, 'error': '⚠️ غير قادر على تحديد نوع الملف. يرجى التأكد من اسم الملف أو نوعه.'})
+    
+    print(f"📁 الامتداد المستخرج: {ext}")
+    
+    # تعريف new_filename هنا (مرة واحدة)
     new_filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.{ext}"
     
     if 'base64,' in file_data:
