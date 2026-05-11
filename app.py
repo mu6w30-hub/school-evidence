@@ -3698,6 +3698,7 @@ def save_evidence():
     file_data = data.get('image')
     filename = data.get('filename', f"file_{uuid.uuid4().hex}")
     file_type = data.get('filetype', 'application/octet-stream')
+    print(f"📁 رفع ملف - filename: {filename}, file_type: {file_type}")  # للتصحيح
     
     # جلب بيانات العنصر والشاهد من قاعدة البيانات
     conn = sqlite3.connect(DB_PATH)
@@ -3722,10 +3723,11 @@ def save_evidence():
     if not witness_text:
         return jsonify({'success': False, 'error': 'الشاهد غير موجود'})
     
-    # استخراج الامتداد من اسم الملف أو من نوع الملف
-    if '.' in filename:
+    # استخراج الامتداد من اسم الملف أولاً (الأفضل)
+    if '.' in filename and not filename.endswith('.file'):
         ext = filename.split('.')[-1]
     else:
+        # خريطة موسعة لأنواع الملفات
         ext_map = {
             'application/pdf': 'pdf',
             'application/msword': 'doc',
@@ -3734,9 +3736,24 @@ def save_evidence():
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
             'application/vnd.ms-powerpoint': 'ppt',
             'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
-            'text/plain': 'txt'
+            'image/jpeg': 'jpg',
+            'image/png': 'png',
+            'image/gif': 'gif',
+            'image/webp': 'webp',
+            'image/bmp': 'bmp',
+            'text/plain': 'txt',
+            'application/zip': 'zip',
+            'application/x-rar-compressed': 'rar'
         }
-        ext = ext_map.get(file_type, 'file')
+        ext = ext_map.get(file_type, '')
+        
+        # إذا لم نجد امتداداً من نوع الملف، حاول استخراجه من filename الأصلي
+        if not ext and '.' in filename:
+            ext = filename.split('.')[-1]
+        
+        # إذا لم نجد امتداداً إطلاقاً، استخدم 'file' كآخر خيار
+        if not ext:
+            ext = 'file'
     
     new_filename = f"{session['username']}_{element_id}_{witness_id}_{uuid.uuid4().hex}.{ext}"
     
